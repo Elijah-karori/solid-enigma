@@ -16,9 +16,11 @@ interface SidebarProps {
   activeTab: string;
   setActiveTab: (tab: string) => void;
   userRole: string;
+  userName?: string;
+  onLogout?: () => void;
 }
 
-export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, userRole }) => {
+export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, userRole, userName = 'Admin Operator', onLogout }) => {
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'serialized', label: 'Serialized Inventory', icon: Boxes },
@@ -62,14 +64,24 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, userR
         </nav>
       </div>
 
-      <div className="p-4 border-t border-slate-800">
+      <div className="p-4 border-t border-slate-800 space-y-3">
         <div className="bg-slate-900 p-3 rounded-lg border border-slate-800 text-xs">
           <p className="text-slate-400">Logged in as:</p>
-          <p className="font-bold text-slate-200 mt-0.5">Admin Operator</p>
+          <p className="font-bold text-slate-200 mt-0.5">{userName}</p>
           <span className="inline-block px-2 py-0.5 bg-sky-950 text-sky-400 rounded border border-sky-800 mt-2 text-[10px]">
             {userRole}
           </span>
         </div>
+
+        {onLogout && (
+          <button
+            onClick={onLogout}
+            className="w-full flex items-center justify-center space-x-2 px-3 py-2 bg-slate-900 hover:bg-rose-950/50 hover:text-rose-400 border border-slate-800 rounded-lg text-xs font-medium text-slate-400 transition-colors"
+          >
+            <LogOut className="w-4 h-4" />
+            <span>Sign Out</span>
+          </button>
+        )}
       </div>
     </aside>
   );

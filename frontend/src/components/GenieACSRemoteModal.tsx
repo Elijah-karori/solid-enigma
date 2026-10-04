@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { GenieACSDevice } from '../types';
 import { X, RefreshCw, RotateCcw, AlertTriangle, Radio, Wifi, ShieldAlert } from 'lucide-react';
+import { apiFetch } from '../api';
 
 interface Props {
   serialNumber: string;
@@ -14,10 +15,7 @@ export const GenieACSRemoteModal: React.FC<Props> = ({ serialNumber, onClose }) 
 
   const fetchDevice = () => {
     setLoading(true);
-    fetch(`/api/genieacs/device/${serialNumber}`, {
-      headers: { Authorization: `Bearer ${localStorage.getItem('token') || ''}` }
-    })
-      .then((res) => res.json())
+    apiFetch(`/api/genieacs/device/${serialNumber}`)
       .then((data) => {
         setDevice(data);
         setLoading(false);
@@ -34,18 +32,16 @@ export const GenieACSRemoteModal: React.FC<Props> = ({ serialNumber, onClose }) 
 
   const handleAction = (action: string, reason: string) => {
     setActionMessage(`Executing ${action}...`);
-    fetch(`/api/genieacs/device/${serialNumber}/action`, {
+    apiFetch(`/api/genieacs/device/${serialNumber}/action`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${localStorage.getItem('token') || ''}`
-      },
       body: JSON.stringify({ action, reason }),
     })
-      .then((res) => res.json())
       .then((res) => {
-        setActionMessage(res.message);
+        setActionMessage(res.message || 'Action executed successfully');
         fetchDevice();
+      })
+      .catch((err) => {
+        setActionMessage(`Error: ${err.message}`);
       });
   };
 

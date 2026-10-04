@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Boxes, Users, ClipboardList, TicketCheck, FolderKanban, Activity } from 'lucide-react';
+import { apiFetch } from '../api';
 
 export const DashboardView: React.FC = () => {
   const [stats, setStats] = useState({
@@ -12,12 +13,13 @@ export const DashboardView: React.FC = () => {
   });
 
   useEffect(() => {
-    fetch('/api/dashboard', {
-      headers: { Authorization: `Bearer ${localStorage.getItem('token') || ''}` }
-    })
-      .then((res) => res.json())
-      .then((data) => setStats(data))
-      .catch((err) => console.error(err));
+    apiFetch('/api/dashboard')
+      .then((data) => {
+        if (data && typeof data === 'object') {
+          setStats((prev) => ({ ...prev, ...data }));
+        }
+      })
+      .catch((err) => console.error('Dashboard fetch error:', err));
   }, []);
 
   const cards = [

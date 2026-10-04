@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { OLT, Splitter, Enclosure, AccessPoint, Customer } from '../types';
 import { Network, GitCommit, Layers, Cpu, ArrowRight, UserCheck } from 'lucide-react';
+import { apiFetch } from '../api';
 
 interface Props {
   onOpenGenieACSModal: (serial: string) => void;
@@ -19,19 +20,26 @@ export const NetworkTopologyView: React.FC<Props> = ({ onOpenGenieACSModal }) =>
   const [selectedAccount, setSelectedAccount] = useState<string>('');
 
   useEffect(() => {
-    fetch('/api/topology', {
-      headers: { Authorization: `Bearer ${localStorage.getItem('token') || ''}` }
-    })
-      .then((res) => res.json())
+    apiFetch('/api/topology')
       .then((data) => {
-        setTopology(data);
-        if (data.customers && data.customers.length > 0) {
-          setSelectedAccount(data.customers[0].account_number);
+        if (data && typeof data === 'object') {
+          const safeData = {
+            olts: Array.isArray(data.olts) ? data.olts : [],
+            splitters: Array.isArray(data.splitters) ? data.splitters : [],
+            enclosures: Array.isArray(data.enclosures) ? data.enclosures : [],
+            aps: Array.isArray(data.aps) ? data.aps : [],
+            customers: Array.isArray(data.customers) ? data.customers : [],
+          };
+          setTopology(safeData);
+          if (safeData.customers.length > 0) {
+            setSelectedAccount(safeData.customers[0].account_number);
+          }
         }
-      });
+      })
+      .catch((err) => console.error('Topology fetch error:', err));
   }, []);
 
-  const selectedCust = topology.customers.find((c) => c.account_number === selectedAccount);
+  const selectedCust = (topology.customers || []).find((c) => c.account_number === selectedAccount);
 
   return (
     <div className="space-y-6">

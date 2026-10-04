@@ -3,9 +3,10 @@ import { Search, Bell, Cpu, Wifi } from 'lucide-react';
 
 interface HeaderProps {
   title: string;
+  userName?: string;
 }
 
-export const Header: React.FC<HeaderProps> = ({ title }) => {
+export const Header: React.FC<HeaderProps> = ({ title, userName }) => {
   return (
     <header className="h-16 bg-slate-900 border-b border-slate-800 px-6 flex items-center justify-between sticky top-0 z-30">
       <div className="flex items-center space-x-4">

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Customer, Hotspot, HotspotUser } from '../types';
 import { UserPlus, Wifi, Search, Link, Cpu, MapPin } from 'lucide-react';
+import { apiFetch } from '../api';
 
 interface Props {
   onOpenGenieACSModal: (serial: string) => void;
@@ -27,17 +28,19 @@ export const CustomersView: React.FC<Props> = ({ onOpenGenieACSModal }) => {
   });
 
   const fetchData = () => {
-    fetch('/api/customers', {
-      headers: { Authorization: `Bearer ${localStorage.getItem('token') || ''}` }
-    })
-      .then((res) => res.json())
-      .then((data) => setCustomers(data || []));
+    apiFetch('/api/customers')
+      .then((data) => setCustomers(Array.isArray(data) ? data : []))
+      .catch((err) => {
+        console.error('Error fetching customers:', err);
+        setCustomers([]);
+      });
 
-    fetch('/api/hotspots', {
-      headers: { Authorization: `Bearer ${localStorage.getItem('token') || ''}` }
-    })
-      .then((res) => res.json())
-      .then((data) => setHotspots(data || []));
+    apiFetch('/api/hotspots')
+      .then((data) => setHotspots(Array.isArray(data) ? data : []))
+      .catch((err) => {
+        console.error('Error fetching hotspots:', err);
+        setHotspots([]);
+      });
   };
 
   useEffect(() => {
@@ -46,19 +49,15 @@ export const CustomersView: React.FC<Props> = ({ onOpenGenieACSModal }) => {
 
   const handleCreateCustomer = (e: React.FormEvent) => {
     e.preventDefault();
-    fetch('/api/customers', {
+    apiFetch('/api/customers', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${localStorage.getItem('token') || ''}`
-      },
       body: JSON.stringify(cForm),
     })
-      .then((res) => res.json())
       .then(() => {
         setShowAddCustomer(false);
         fetchData();
-      });
+      })
+      .catch((err) => console.error('Error creating customer:', err));
   };
 
   return (

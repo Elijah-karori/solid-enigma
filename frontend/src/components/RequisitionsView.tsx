@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { TechnicianRequisition } from '../types';
 import { Plus, CheckCircle, XCircle, ArrowRight } from 'lucide-react';
+import { apiFetch } from '../api';
 
 export const RequisitionsView: React.FC = () => {
   const [reqs, setReqs] = useState<TechnicianRequisition[]>([]);
@@ -14,11 +15,12 @@ export const RequisitionsView: React.FC = () => {
   });
 
   const fetchReqs = () => {
-    fetch('/api/requisitions', {
-      headers: { Authorization: `Bearer ${localStorage.getItem('token') || ''}` }
-    })
-      .then((res) => res.json())
-      .then((data) => setReqs(data || []));
+    apiFetch('/api/requisitions')
+      .then((data) => setReqs(Array.isArray(data) ? data : []))
+      .catch((err) => {
+        console.error('Error fetching requisitions:', err);
+        setReqs([]);
+      });
   };
 
   useEffect(() => {
@@ -27,45 +29,33 @@ export const RequisitionsView: React.FC = () => {
 
   const handleCreate = (e: React.FormEvent) => {
     e.preventDefault();
-    fetch('/api/requisitions', {
+    apiFetch('/api/requisitions', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${localStorage.getItem('token') || ''}`
-      },
       body: JSON.stringify(form),
     })
-      .then((res) => res.json())
       .then(() => {
         setShowModal(false);
         fetchReqs();
-      });
+      })
+      .catch((err) => console.error('Error creating requisition:', err));
   };
 
   const handleDecide = (id: string, action: string) => {
-    fetch(`/api/requisitions/${id}/decide`, {
+    apiFetch(`/api/requisitions/${id}/decide`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${localStorage.getItem('token') || ''}`
-      },
       body: JSON.stringify({ action, decision_note: `${action} by Store Manager` }),
     })
-      .then((res) => res.json())
-      .then(() => fetchReqs());
+      .then(() => fetchReqs())
+      .catch((err) => console.error('Error deciding requisition:', err));
   };
 
   const handleIssue = (id: string) => {
-    fetch(`/api/requisitions/${id}/issue`, {
+    apiFetch(`/api/requisitions/${id}/issue`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${localStorage.getItem('token') || ''}`
-      },
       body: JSON.stringify({ asset_ids: ['ONT-DEMO-01'] }),
     })
-      .then((res) => res.json())
-      .then(() => fetchReqs());
+      .then(() => fetchReqs())
+      .catch((err) => console.error('Error issuing requisition:', err));
   };
 
   return (

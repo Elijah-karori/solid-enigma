@@ -4,16 +4,38 @@ import os
 import uuid
 from datetime import datetime
 
-EXCEL_PATH = "/tmp/file_attachments/invertory/serialized_ONT_inventory_register (1) (7).xlsx"
 DB_PATH = "app_inventory.db"
+EXCEL_PATHS = [
+    "/home/netview/Downloads/invertory/serialized_ONT_inventory_register (1) (7).xlsx",
+    "/tmp/file_attachments/invertory/serialized_ONT_inventory_register (1) (7).xlsx",
+]
+
+def get_excel_path():
+    for p in EXCEL_PATHS:
+        if os.path.exists(p):
+            return p
+    return None
 
 def migrate():
-    if not os.path.exists(EXCEL_PATH):
-        print(f"Excel file not found at {EXCEL_PATH}")
+    excel_path = get_excel_path()
+    if not excel_path:
+        print(f"Excel file not found in any path: {EXCEL_PATHS}")
+        # Still seed admin user if DB exists
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT count(*) FROM users WHERE email='admin@ont.co.ke'")
+        if cursor.fetchone()[0] == 0:
+            cursor.execute("""
+                INSERT INTO users (id, email, password_hash, name, role, status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+            """, (str(uuid.uuid4()), "admin@ont.co.ke", "admin123", "System Admin", "Admin", "active"))
+            print("Default admin user created: admin@ont.co.ke / admin123")
+            conn.commit()
+        conn.close()
         return
 
-    print("Opening Excel workbook...")
-    wb = openpyxl.load_workbook(EXCEL_PATH, data_only=True)
+    print(f"Opening Excel workbook: {excel_path}...")
+    wb = openpyxl.load_workbook(excel_path, data_only=True)
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 

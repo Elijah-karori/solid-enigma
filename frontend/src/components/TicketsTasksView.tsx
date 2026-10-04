@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { CustomerTicket } from '../types';
 import { Plus, TicketCheck, RefreshCw, CheckCircle2 } from 'lucide-react';
+import { apiFetch } from '../api';
 
 export const TicketsTasksView: React.FC = () => {
   const [tickets, setTickets] = useState<CustomerTicket[]>([]);
@@ -14,11 +15,12 @@ export const TicketsTasksView: React.FC = () => {
   });
 
   const fetchTickets = () => {
-    fetch('/api/tickets', {
-      headers: { Authorization: `Bearer ${localStorage.getItem('token') || ''}` }
-    })
-      .then((res) => res.json())
-      .then((data) => setTickets(data || []));
+    apiFetch('/api/tickets')
+      .then((data) => setTickets(Array.isArray(data) ? data : []))
+      .catch((err) => {
+        console.error('Error fetching tickets:', err);
+        setTickets([]);
+      });
   };
 
   useEffect(() => {
@@ -27,36 +29,28 @@ export const TicketsTasksView: React.FC = () => {
 
   const handleCreate = (e: React.FormEvent) => {
     e.preventDefault();
-    fetch('/api/tickets', {
+    apiFetch('/api/tickets', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${localStorage.getItem('token') || ''}`
-      },
       body: JSON.stringify(tForm),
     })
-      .then((res) => res.json())
       .then(() => {
         setShowModal(false);
         fetchTickets();
-      });
+      })
+      .catch((err) => console.error('Error creating ticket:', err));
   };
 
   const handleResolve = (ticket: CustomerTicket) => {
-    fetch(`/api/tickets/${ticket.ticket_id}`, {
+    apiFetch(`/api/tickets/${ticket.ticket_id}`, {
       method: 'PATCH',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${localStorage.getItem('token') || ''}`
-      },
       body: JSON.stringify({
         ...ticket,
         ticket_status: 'Resolved',
         resolution_notes: 'Device replaced and optic signal verified.',
       }),
     })
-      .then((res) => res.json())
-      .then(() => fetchTickets());
+      .then(() => fetchTickets())
+      .catch((err) => console.error('Error resolving ticket:', err));
   };
 
   return (

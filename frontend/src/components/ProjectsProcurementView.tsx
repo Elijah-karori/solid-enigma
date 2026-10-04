@@ -1,22 +1,25 @@
 import React, { useEffect, useState } from 'react';
 import { FolderKanban, ShoppingCart } from 'lucide-react';
+import { apiFetch } from '../api';
 
 export const ProjectsProcurementView: React.FC = () => {
   const [projects, setProjects] = useState<any[]>([]);
   const [procurement, setProcurement] = useState<any[]>([]);
 
   useEffect(() => {
-    fetch('/api/projects', {
-      headers: { Authorization: `Bearer ${localStorage.getItem('token') || ''}` }
-    })
-      .then((res) => res.json())
-      .then((data) => setProjects(data || []));
+    apiFetch('/api/projects')
+      .then((data) => setProjects(Array.isArray(data) ? data : []))
+      .catch((err) => {
+        console.error('Error fetching projects:', err);
+        setProjects([]);
+      });
 
-    fetch('/api/procurement', {
-      headers: { Authorization: `Bearer ${localStorage.getItem('token') || ''}` }
-    })
-      .then((res) => res.json())
-      .then((data) => setProcurement(data || []));
+    apiFetch('/api/procurement')
+      .then((data) => setProcurement(Array.isArray(data) ? data : []))
+      .catch((err) => {
+        console.error('Error fetching procurement:', err);
+        setProcurement([]);
+      });
   }, []);
 
   return (

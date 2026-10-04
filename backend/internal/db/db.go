@@ -62,5 +62,22 @@ func InitDB() *gorm.DB {
 		log.Fatalf("AutoMigrate failed: %v", err)
 	}
 
+	var userCount int64
+	DB.Model(&models.User{}).Where("email = ?", "admin@ont.co.ke").Count(&userCount)
+	if userCount == 0 {
+		admin := models.User{
+			Email:        "admin@ont.co.ke",
+			PasswordHash: "admin123",
+			Name:         "System Admin",
+			Role:         "Admin",
+			Status:       "active",
+		}
+		if err := DB.Create(&admin).Error; err != nil {
+			log.Printf("Failed to seed admin user: %v", err)
+		} else {
+			log.Println("Seeded default admin user: admin@ont.co.ke")
+		}
+	}
+
 	return DB
 }
