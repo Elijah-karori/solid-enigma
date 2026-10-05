@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/ont/inventory-backend/internal/models"
+	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -57,6 +58,8 @@ func InitDB() *gorm.DB {
 		&models.DeliveryNote{},
 		&models.AuditLedger{},
 		&models.GenieACSAuditLog{},
+		&models.InventorySetting{},
+		&models.NotificationLog{},
 	)
 	if err != nil {
 		log.Fatalf("AutoMigrate failed: %v", err)
@@ -65,9 +68,10 @@ func InitDB() *gorm.DB {
 	var userCount int64
 	DB.Model(&models.User{}).Where("email = ?", "admin@ont.co.ke").Count(&userCount)
 	if userCount == 0 {
+		hashed, _ := bcrypt.GenerateFromPassword([]byte("admin123"), bcrypt.DefaultCost)
 		admin := models.User{
 			Email:        "admin@ont.co.ke",
-			PasswordHash: "admin123",
+			PasswordHash: string(hashed),
 			Name:         "System Admin",
 			Role:         "Admin",
 			Status:       "active",

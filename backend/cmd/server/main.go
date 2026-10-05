@@ -28,18 +28,28 @@ func main() {
 
 	// Public Routes
 	e.POST("/api/auth/login", handlers.Login)
+	e.POST("/api/auth/magic-link", handlers.SendMagicLink)
 
 	// Protected Routes
 	api := e.Group("/api", handlers.AuthMiddleware)
 
-	// Dashboard
+	// Auth & User Administration
+	api.POST("/auth/change-password", handlers.ChangePassword)
+	api.GET("/users", handlers.GetUsers)
+	api.POST("/users", handlers.SaveUser)
+
+	// Dashboard & Lookup
 	api.GET("/dashboard", handlers.GetDashboardSummary)
+	api.GET("/lookup", handlers.UniversalLookup)
 
 	// Catalog & Inventory
 	api.GET("/catalog", handlers.GetCatalog)
 	api.POST("/catalog", handlers.SaveCatalogItem)
 	api.GET("/inventory/serialized", handlers.GetSerializedInventory)
 	api.POST("/inventory/stock-in", handlers.StockInSerializedItem)
+	api.POST("/inventory/batch-stock-in", handlers.BatchStockInSerialized)
+	api.POST("/inventory/movement", handlers.RecordStockMovement)
+	api.POST("/inventory/replace-device", handlers.ReplaceDevice)
 	api.PUT("/inventory/serialized/:id", handlers.UpdateSerializedDevice)
 	api.GET("/inventory/transactions", handlers.GetTransactions)
 
@@ -73,13 +83,29 @@ func main() {
 	// Tasks, Tickets & Procurement
 	api.GET("/tasks", handlers.GetTasks)
 	api.POST("/tasks", handlers.CreateTask)
+	api.PATCH("/tasks/:id/status", handlers.UpdateTaskStatus)
 	api.GET("/tickets", handlers.GetTickets)
 	api.POST("/tickets", handlers.CreateTicket)
 	api.PATCH("/tickets/:id", handlers.UpdateTicket)
 	api.GET("/procurement", handlers.GetProcurement)
 	api.POST("/procurement", handlers.CreateProcurement)
+	api.POST("/procurement/:id/decide", handlers.DecideProcurement)
+	api.POST("/procurement/:id/order", handlers.OrderProcurement)
+	api.POST("/procurement/:id/receive", handlers.ReceiveProcurement)
 	api.GET("/projects", handlers.GetProjects)
 	api.POST("/projects", handlers.CreateProject)
+
+	// Delivery Notes & Financial Payments
+	api.GET("/delivery-notes", handlers.GetDeliveryNotes)
+	api.POST("/delivery-notes", handlers.GenerateDeliveryNote)
+	api.PATCH("/delivery-notes/:id/payment", handlers.UpdatePaymentStatus)
+
+	// SHA-256 Audit Trail & System Settings
+	api.GET("/audit", handlers.GetAuditLogs)
+	api.POST("/audit/verify", handlers.VerifyAuditTrail)
+	api.GET("/settings", handlers.GetSettings)
+	api.POST("/settings", handlers.SaveSettings)
+	api.POST("/inventory/low-stock-scan", handlers.RunLowStockScan)
 
 	port := os.Getenv("PORT")
 	if port == "" {

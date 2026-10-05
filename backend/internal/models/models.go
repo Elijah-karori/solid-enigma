@@ -7,16 +7,17 @@ import (
 )
 
 type User struct {
-	ID           uuid.UUID `gorm:"type:string;primaryKey" json:"id"`
-	Email        string    `gorm:"uniqueIndex;not null" json:"email"`
-	PasswordHash string    `json:"-"`
-	Name         string    `json:"name"`
-	Role         string    `json:"role"` // Admin, Store Manager, Finance, Project Manager, Support, Technician
-	Status       string    `gorm:"default:'active'" json:"status"`
-	SiteStation  string    `json:"site_station"`
-	ContactInfo  string    `json:"contact_info"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID                 uuid.UUID `gorm:"type:string;primaryKey" json:"id"`
+	Email              string    `gorm:"uniqueIndex;not null" json:"email"`
+	PasswordHash       string    `json:"-"`
+	MustChangePassword bool      `gorm:"default:false" json:"must_change_password"`
+	Name               string    `json:"name"`
+	Role               string    `json:"role"` // Admin, Store Manager, Finance, Project Manager, Support, Technician
+	Status             string    `gorm:"default:'active'" json:"status"`
+	SiteStation        string    `json:"site_station"`
+	ContactInfo        string    `json:"contact_info"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
 }
 
 type MagicToken struct {
@@ -52,7 +53,7 @@ type SerializedInventory struct {
 	AccessTech       string    `json:"access_tech"`
 	ProductID        string    `json:"product_id"`
 	MAC              string    `json:"mac"`
-	SerialNumber     string    `gorm:"uniqueIndex;not null" json:"serial_number"`
+	SerialNumber     string    `gorm:"index" json:"serial_number"`
 	Status           string    `json:"status"` // In Stock, Issued / Out, Under Repair, Decommissioned
 	Condition        string    `json:"condition"` // New, Used, Faulty
 	Location         string    `json:"location"`
@@ -62,6 +63,23 @@ type SerializedInventory struct {
 	CurrentProjectID string    `json:"current_project_id"`
 	CreatedAt        time.Time `json:"created_at"`
 	UpdatedAt        time.Time `json:"updated_at"`
+}
+
+type InventorySetting struct {
+	Key       string    `gorm:"primaryKey" json:"key"`
+	Value     string    `json:"value"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type NotificationLog struct {
+	ID        uuid.UUID `gorm:"type:string;primaryKey" json:"id"`
+	Timestamp time.Time `json:"timestamp"`
+	Type      string    `json:"type"`
+	Reference string    `json:"reference"`
+	Recipient string    `json:"recipient"`
+	Subject   string    `json:"subject"`
+	Status    string    `json:"status"`
+	Error     string    `json:"error"`
 }
 
 type BulkInventory struct {

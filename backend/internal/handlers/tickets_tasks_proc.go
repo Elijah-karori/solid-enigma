@@ -10,27 +10,7 @@ import (
 	"github.com/ont/inventory-backend/internal/models"
 )
 
-// Tasks APIs
-func GetTasks(c echo.Context) error {
-	var tasks []models.TechnicianTask
-	db.DB.Order("created_at desc").Find(&tasks)
-	return c.JSON(http.StatusOK, tasks)
-}
-
-func CreateTask(c echo.Context) error {
-	var task models.TechnicianTask
-	if err := c.Bind(&task); err != nil {
-		return c.JSON(http.StatusBadRequest, echo.Map{"error": err.Error()})
-	}
-	task.TaskID = fmt.Sprintf("TASK-%d", time.Now().UnixNano()%100000)
-	task.CreatedAt = time.Now()
-	task.UpdatedAt = time.Now()
-
-	if err := db.DB.Create(&task).Error; err != nil {
-		return c.JSON(http.StatusInternalServerError, echo.Map{"error": err.Error()})
-	}
-	return c.JSON(http.StatusOK, task)
-}
+// Tasks, Tickets, Procurement & Projects APIs
 
 // Tickets & Device Replacement APIs
 func GetTickets(c echo.Context) error {
@@ -96,32 +76,6 @@ func UpdateTicket(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, echo.Map{"error": err.Error()})
 	}
 	return c.JSON(http.StatusOK, ticket)
-}
-
-// Procurement APIs
-func GetProcurement(c echo.Context) error {
-	var proc []models.ProcurementRequest
-	db.DB.Order("date_requested desc").Find(&proc)
-	return c.JSON(http.StatusOK, proc)
-}
-
-func CreateProcurement(c echo.Context) error {
-	var req models.ProcurementRequest
-	if err := c.Bind(&req); err != nil {
-		return c.JSON(http.StatusBadRequest, echo.Map{"error": err.Error()})
-	}
-
-	req.ProcurementID = fmt.Sprintf("PROC-%d", time.Now().UnixNano()%100000)
-	req.DateRequested = time.Now()
-	req.Status = "Pending Finance"
-	req.EstTotal = req.Quantity * req.EstUnitCost
-	req.CreatedAt = time.Now()
-	req.UpdatedAt = time.Now()
-
-	if err := db.DB.Create(&req).Error; err != nil {
-		return c.JSON(http.StatusInternalServerError, echo.Map{"error": err.Error()})
-	}
-	return c.JSON(http.StatusOK, req)
 }
 
 // Projects APIs

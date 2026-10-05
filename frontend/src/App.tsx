@@ -10,6 +10,14 @@ import { TicketsTasksView } from './components/TicketsTasksView';
 import { ProjectsProcurementView } from './components/ProjectsProcurementView';
 import { GenieACSRemoteModal } from './components/GenieACSRemoteModal';
 import { LoginView } from './components/LoginView';
+import { CatalogView } from './components/CatalogView';
+import { StockMovementView } from './components/StockMovementView';
+import { BatchStockInView } from './components/BatchStockInView';
+import { DeliveryNotesView } from './components/DeliveryNotesView';
+import { AuditLedgerView } from './components/AuditLedgerView';
+import { UserAdminView } from './components/UserAdminView';
+import { InventorySettingsView } from './components/InventorySettingsView';
+import { BarcodeScannerModal } from './components/BarcodeScannerModal';
 import { apiFetch, getAuthToken, setAuthToken, clearAuthToken } from './api';
 import { User } from './types';
 import { Loader2 } from 'lucide-react';
@@ -17,6 +25,7 @@ import { Loader2 } from 'lucide-react';
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [genieACSSerial, setGenieACSSerial] = useState<string | null>(null);
+  const [barcodeScannerOpen, setBarcodeScannerOpen] = useState(false);
   const [token, setToken] = useState<string | null>(getAuthToken());
   const [user, setUser] = useState<User | null>(() => {
     const stored = localStorage.getItem('user');
@@ -93,14 +102,21 @@ export const App: React.FC = () => {
 
   const getTitle = () => {
     switch (activeTab) {
-      case 'dashboard': return 'Operations Dashboard';
-      case 'serialized': return 'Serialized Equipment Register';
-      case 'customers': return 'Customer & Hotspot Subscriptions';
-      case 'topology': return 'FTTH & Wireless Network Topology';
-      case 'requisitions': return 'Technician Material Requests';
+      case 'dashboard':     return 'Operations Dashboard';
+      case 'catalog':       return 'Item Catalog Master';
+      case 'serialized':    return 'Serialized Equipment Register';
+      case 'movement':      return 'General Stock Movements';
+      case 'stockin':       return 'Batch Serialized Stock-In';
+      case 'customers':     return 'Customer & Hotspot Subscriptions';
+      case 'topology':      return 'FTTH & Wireless Network Topology';
+      case 'requisitions':  return 'Technician Material Requests';
       case 'tickets-tasks': return 'Customer Support & Device Swaps';
       case 'projects-proc': return 'Projects & Procurement Engine';
-      default: return 'ONT Network Portal';
+      case 'docs':          return 'Delivery & Receipt Notes';
+      case 'audit':         return 'Append-Only Audit Ledger';
+      case 'users':         return 'User Administration';
+      case 'settings':      return 'Inventory Settings';
+      default:              return 'ONT Network Portal';
     }
   };
 
@@ -127,21 +143,32 @@ export const App: React.FC = () => {
         onLogout={handleLogout}
       />
       <div className="flex-1 flex flex-col min-w-0">
-        <Header title={getTitle()} userName={user?.name || 'Admin Operator'} />
+        <Header
+          title={getTitle()}
+          userName={user?.name || 'Admin Operator'}
+          onScanBarcode={() => setBarcodeScannerOpen(true)}
+        />
         <main className="p-6 flex-1 overflow-y-auto">
-          {activeTab === 'dashboard' && <DashboardView />}
-          {activeTab === 'serialized' && (
+          {activeTab === 'dashboard'     && <DashboardView />}
+          {activeTab === 'catalog'       && <CatalogView />}
+          {activeTab === 'serialized'    && (
             <SerializedInventoryView onOpenGenieACSModal={(s) => setGenieACSSerial(s)} />
           )}
-          {activeTab === 'customers' && (
+          {activeTab === 'movement'      && <StockMovementView />}
+          {activeTab === 'stockin'       && <BatchStockInView />}
+          {activeTab === 'customers'     && (
             <CustomersView onOpenGenieACSModal={(s) => setGenieACSSerial(s)} />
           )}
-          {activeTab === 'topology' && (
+          {activeTab === 'topology'      && (
             <NetworkTopologyView onOpenGenieACSModal={(s) => setGenieACSSerial(s)} />
           )}
-          {activeTab === 'requisitions' && <RequisitionsView />}
+          {activeTab === 'requisitions'  && <RequisitionsView />}
           {activeTab === 'tickets-tasks' && <TicketsTasksView />}
           {activeTab === 'projects-proc' && <ProjectsProcurementView />}
+          {activeTab === 'docs'          && <DeliveryNotesView />}
+          {activeTab === 'audit'         && <AuditLedgerView />}
+          {activeTab === 'users'         && <UserAdminView />}
+          {activeTab === 'settings'      && <InventorySettingsView />}
         </main>
       </div>
 
@@ -150,6 +177,10 @@ export const App: React.FC = () => {
           serialNumber={genieACSSerial}
           onClose={() => setGenieACSSerial(null)}
         />
+      )}
+
+      {barcodeScannerOpen && (
+        <BarcodeScannerModal onClose={() => setBarcodeScannerOpen(false)} />
       )}
     </div>
   );
