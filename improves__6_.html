@@ -1,0 +1,1476 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ONT Network Inventory Portal</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+<style type="text/tailwindcss">
+  @layer components {
+    .inp{@apply w-full p-2.5 text-sm border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-indigo-500 bg-white disabled:bg-slate-50 disabled:text-slate-400}
+    .lbl{@apply block text-xs font-semibold text-slate-600 mb-1}
+    .btn{@apply px-3 py-2 text-sm font-semibold rounded-lg text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 transition}
+    .btn-sm{@apply px-2 py-1 text-xs font-semibold rounded text-white transition}
+    .card{@apply bg-white rounded-xl border border-slate-200 shadow-sm}
+    .th{@apply p-2 border-b text-left whitespace-nowrap}
+    .td{@apply p-2 border-b align-top}
+  }
+</style>
+</head>
+<body class="bg-slate-100 text-slate-800 font-sans min-h-screen md:flex">
+
+<!-- LOGIN -->
+<div id="login-modal" class="fixed inset-0 bg-slate-900/80 z-50 flex items-center justify-center p-4">
+  <div class="bg-white max-w-md w-full rounded-2xl shadow-2xl p-6 space-y-4">
+    <div class="text-center">
+      <i class="fa-solid fa-network-wired text-3xl text-indigo-600"></i>
+      <h2 class="text-xl font-bold mt-2">ONT Network Inventory</h2>
+      <p class="text-xs text-slate-500">Sign in with your email and password, or get a one-time link.</p>
+    </div>
+    <form onsubmit="doLogin(event)" class="space-y-3">
+      <div><label class="lbl">Email</label><input id="login-email" type="email" required class="inp" autocomplete="username"></div>
+      <div><label class="lbl">Password</label><input id="login-password" type="password" required class="inp" autocomplete="current-password"></div>
+      <button id="btn-login" class="btn w-full">Log in</button>
+    </form>
+    <div class="border-t pt-3 space-y-2">
+      <input id="magic-email" type="email" placeholder="Your email for a login link" class="inp">
+      <button id="btn-magic" type="button" onclick="sendMagic()" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold py-2.5 rounded-lg">Email me a login link</button>
+    </div>
+    <div id="login-msg" class="hidden text-xs text-center p-2.5 rounded-lg border"></div>
+  </div>
+</div>
+
+<!-- SIDEBAR (desktop) -->
+<aside class="hidden md:flex flex-col w-60 shrink-0 bg-slate-900 text-white sticky top-0 h-screen">
+  <div class="px-4 py-5 flex items-center gap-3 border-b border-slate-800">
+    <i class="fa-solid fa-network-wired text-indigo-400 text-2xl"></i>
+    <div class="leading-tight"><p class="font-bold text-sm">ONT Inventory</p><p class="text-[11px] text-slate-400">Network portal</p></div>
+  </div>
+  <nav id="side-nav" class="flex-1 overflow-y-auto p-3 space-y-1"></nav>
+  <div class="p-3 border-t border-slate-800 space-y-2">
+    <p id="user-badge" class="text-xs text-indigo-300 px-1 break-words"></p>
+    <div class="flex gap-2">
+      <button onclick="pwModal()" class="flex-1 text-xs bg-slate-800 hover:bg-slate-700 py-1.5 rounded border border-slate-700"><i class="fa-solid fa-key mr-1"></i>Password</button>
+      <button onclick="doLogout()" class="flex-1 text-xs bg-slate-800 hover:bg-slate-700 py-1.5 rounded border border-slate-700"><i class="fa-solid fa-right-from-bracket mr-1"></i>Log out</button>
+    </div>
+  </div>
+</aside>
+
+<div class="flex-1 min-w-0 flex flex-col pb-16 md:pb-0">
+<header class="bg-white border-b border-slate-200 sticky top-0 z-30">
+  <div class="px-4 md:px-6 py-3 flex justify-between items-center">
+    <div class="flex items-center gap-2"><i class="fa-solid fa-network-wired text-indigo-600 md:hidden"></i><h1 id="page-title" class="text-lg font-bold">Dashboard</h1></div>
+    <div class="flex gap-2"><button onclick="openScannerModal()" class="text-xs bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded"><i class="fa-solid fa-barcode mr-1"></i>Scan</button><button onclick="loadData()" class="text-xs bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded"><i id="spin" class="fa-solid fa-rotate mr-1"></i>Refresh</button></div>
+  </div>
+</header>
+
+<main class="flex-grow max-w-7xl w-full mx-auto p-4 md:p-6">
+  <div id="toast" class="hidden mb-4 p-3 rounded-lg text-sm font-medium flex justify-between"><span id="toast-msg"></span><button onclick="$('toast').classList.add('hidden')" class="ml-4 font-bold">&times;</button></div>
+
+  <!-- DASHBOARD -->
+  <section id="sec-dashboard" class="hidden space-y-6">
+    <div class="card overflow-hidden">
+      <div class="p-3 bg-slate-50 border-b flex justify-between items-center">
+        <h2 class="font-bold">Waiting on you <span id="pending-count" class="ml-1 px-2 py-0.5 text-xs rounded-full bg-indigo-600 text-white">0</span></h2>
+      </div>
+      <div id="pending-list" class="max-h-80 overflow-y-auto"></div>
+    </div>
+    <div id="cost-block" class="hidden space-y-6">
+      <div id="cost-cards" class="grid grid-cols-2 xl:grid-cols-4 gap-4"></div>
+      <div class="grid xl:grid-cols-2 gap-6">
+        <div class="card overflow-hidden"><div class="p-3 bg-slate-50 border-b font-bold">Issued cost by type</div><div id="cost-types"></div></div>
+        <div class="card overflow-hidden"><div class="p-3 bg-slate-50 border-b font-bold">Cost by task / ticket</div><div id="cost-tasks" class="max-h-80 overflow-y-auto"></div></div>
+      </div>
+    </div>
+    <div id="proj-cost-block" class="hidden card overflow-hidden"><div class="p-3 bg-slate-50 border-b font-bold">Project budget vs spend</div><div id="proj-cost-table"></div></div>
+    <div id="stock-block" class="hidden card overflow-hidden">
+      <div class="p-3 bg-slate-50 border-b flex justify-between items-center gap-2">
+        <h2 class="font-bold">Stock summary</h2>
+        <input oninput="filt(this,'stock-table')" placeholder="Search stock..." class="inp !w-56 !p-1.5">
+      </div>
+      <div id="stock-table"></div>
+    </div>
+  </section>
+
+  <!-- CATALOG -->
+  <section id="sec-catalog" class="hidden grid xl:grid-cols-3 gap-6">
+    <div class="card p-5 space-y-3 xl:col-span-1 self-start">
+      <h2 id="cat-title" class="font-bold text-lg border-b pb-2">Add catalog item</h2>
+      <form id="form-cat" onsubmit="submitForm(event,'saveCatalogItem',()=>resetCat())" class="space-y-3">
+        <input type="hidden" name="mode" id="cat-mode" value="new">
+        <div><label class="lbl">Item type</label>
+          <select name="itemType" id="cat-type" class="inp" onchange="catTypeChange()">
+            <option value="BULK">Bulk material - counted by quantity (cable, consumables)</option>
+            <option value="NONSER">Non-serialized item - counted, no S/N (splitters, adapters, tools)</option>
+            <option value="ONT">ONT - tracked per unit</option>
+            <option value="RTR">Wireless router - tracked per unit</option>
+            <option value="NET">Enterprise router - tracked per unit</option>
+            <option value="FAT">FAT box - tracked per unit</option>
+          </select></div>
+        <div><label class="lbl">Item name / model *</label><input name="model" id="cat-model" required class="inp" placeholder="e.g. 1x16 PLC Splitter"></div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="lbl">SKU (blank = auto)</label><input name="sku" id="cat-sku" class="inp font-mono" placeholder="auto"></div>
+          <div><label class="lbl">Category</label><input name="assetType" id="cat-asset" class="inp" placeholder="e.g. Splitter"></div>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="lbl">Manufacturer</label><input name="manufacturer" id="cat-mfr" class="inp"></div>
+          <div><label class="lbl">Access tech</label><input name="accessTech" id="cat-tech" class="inp" placeholder="XPON, Ethernet..."></div>
+        </div>
+        <div><label class="lbl">Description</label><textarea name="description" id="cat-desc" rows="2" class="inp"></textarea></div>
+        <div><label class="lbl">Who can use it</label><select name="scope" id="cat-scope" class="inp"></select></div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="lbl">Unit cost (KES) <span class="font-normal text-slate-400">Admin only</span></label><input name="unitCost" id="cat-cost" type="number" min="0" step="any" class="inp"></div>
+          <div><label class="lbl">Reorder level</label><input name="reorder" id="cat-reorder" type="number" min="0" value="3" class="inp"></div>
+        </div>
+        <div class="flex gap-2"><button class="btn flex-1">Save item</button><button type="button" onclick="resetCat()" class="px-3 py-2 text-sm rounded-lg border">Clear</button></div>
+      </form>
+    </div>
+    <div class="card overflow-hidden xl:col-span-2">
+      <div class="p-3 bg-slate-50 border-b flex justify-between items-center gap-2"><h2 class="font-bold">Item catalog</h2><input oninput="filt(this,'cat-table')" placeholder="Search..." class="inp !w-56 !p-1.5"></div>
+      <div id="cat-table"></div>
+    </div>
+  </section>
+
+  <!-- MOVEMENT -->
+  <section id="sec-movement" class="hidden max-w-2xl mx-auto">
+    <div class="card p-6 space-y-4">
+      <h2 class="text-lg font-bold border-b pb-2">Record stock movement</h2>
+      <form id="form-txn" onsubmit="submitForm(event,'submitTransaction',()=>{$('txn-date').valueAsDate=new Date();refreshMove()})" class="space-y-3">
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="lbl">Date</label><input type="date" name="date" id="txn-date" required class="inp"></div>
+          <div><label class="lbl">Direction</label><select name="direction" id="txn-dir" onchange="refreshMove()" class="inp"><option value="Stock In">Stock In (+)</option><option value="Stock Out">Stock Out (-)</option></select></div>
+        </div>
+        <div><label class="lbl">Item type</label><select name="itemType" id="txn-type" onchange="refreshMove()" class="inp"><option value="bulk">Bulk / SKU stock</option><option value="serialized">Serialized unit</option></select></div>
+        <div><label class="lbl" id="txn-label">Item SKU</label><div class="flex gap-2"><select name="itemID" id="txn-item" onchange="$('txn-model').value=this.selectedOptions[0]?.dataset.model||''" required class="inp"></select><button type="button" onclick="scanFor(pickMoveItem)" class="btn !bg-emerald-600" title="Scan barcode"><i class="fa-solid fa-barcode"></i></button></div></div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="lbl">Model</label><input name="model" id="txn-model" readonly class="inp"></div>
+          <div><label class="lbl">Quantity</label><input type="number" name="quantity" id="txn-qty" min="1" value="1" required class="inp"></div>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="lbl">Personnel (issued to / received from)</label><select name="user" id="txn-user" class="inp"></select></div>
+          <div><label class="lbl">Cost type</label><select name="costType" id="txn-cost" class="inp"><option>Procurement / Stock In</option><option>Installation</option><option>Replacement</option><option>Repair</option><option>Internal Use</option><option>Transfer</option><option>Adjustment</option><option>Other</option></select></div>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="lbl">Task / ticket ID</label><input name="taskId" class="inp" placeholder="TASK-0012 / TKT-4491"></div>
+          <div><label class="lbl">Site / reference</label><input name="site" class="inp" placeholder="Main Store, customer site..."></div>
+        </div>
+        <div><label class="lbl">Notes</label><textarea name="notes" rows="2" class="inp"></textarea></div>
+        <div id="mv-note" class="hidden rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-800 text-xs p-3"></div>
+        <div><label class="lbl">Project <span class="font-normal text-slate-400">(required for project-only items)</span></label><select name="projectId" id="txn-project" class="inp"></select></div>
+        <button class="btn w-full">Record movement</button>
+      </form>
+    </div>
+  </section>
+
+    <!-- CUSTOMERS -->
+  <section id="sec-customers" class="hidden grid xl:grid-cols-3 gap-6">
+    <div id="cus-form-card" class="card p-5 space-y-3 self-start">
+      <h2 id="cus-title" class="font-bold text-lg border-b pb-2">Add customer</h2>
+      <form id="form-cus" onsubmit="submitForm(event,'saveCustomer',()=>resetCus())" class="space-y-3">
+        <input type="hidden" name="mode" id="cus-mode" value="new"><input type="hidden" name="id" id="cus-id">
+        <div><label class="lbl">Customer name *</label><input name="name" id="cus-name" required class="inp"></div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="lbl">Subscription</label><select name="subscription" id="cus-subscription" onchange="cusSubChange()" class="inp"><option>PPPoE</option><option>Hotspot User</option></select></div>
+          <div><label class="lbl">Status</label><select name="status" id="cus-status" class="inp"><option>Active</option><option>Pending Install</option><option>Suspended</option><option>Disconnected</option></select></div>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="lbl">Account no. <span class="font-normal text-slate-400">(blank = ID)</span></label><input name="account" id="cus-account" class="inp"></div>
+          <div><label class="lbl">Package</label><input name="package" id="cus-package" class="inp" placeholder="10 Mbps"></div>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="lbl">Contact person</label><input name="contact" id="cus-contact" class="inp"></div>
+          <div><label class="lbl">Phone</label><input name="phone" id="cus-phone" class="inp" placeholder="+2547..."></div>
+        </div>
+        <div><label class="lbl">Email</label><input name="email" id="cus-email" type="email" class="inp"></div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="lbl">Plot no.</label><input name="plot" id="cus-plot" class="inp"></div>
+          <div><label class="lbl">Location / estate</label><input name="location" id="cus-location" class="inp"></div>
+        </div>
+        <div id="cus-hsp-block" class="hidden"><label class="lbl">Hotspot this user belongs to *</label><select name="hotspotId" id="cus-hotspot" class="inp"></select></div>
+        <div id="cus-pppoe-block" class="space-y-3">
+          <div><label class="lbl">PPPoE username</label><input name="pppoeUser" id="cus-pppoe" class="inp font-mono"></div>
+          <div><label class="lbl">ONU installed (issued units only)</label><select name="onu" id="cus-onu" class="inp"></select></div>
+          <div class="grid grid-cols-3 gap-3">
+            <div class="col-span-2"><label class="lbl">Connected to splitter</label><select name="splitterId" id="cus-spl" class="inp"></select></div>
+            <div><label class="lbl">Port</label><input name="port" id="cus-port" type="number" min="1" class="inp"></div>
+          </div>
+          <div><label class="lbl">GenieACS device ID <span class="font-normal text-slate-400">(optional - otherwise found by ONU S/N)</span></label><input name="genieId" id="cus-genie" class="inp font-mono"></div>
+        </div>
+        <div><label class="lbl">Install date</label><input type="date" name="installDate" id="cus-install" class="inp"></div>
+        <div><label class="lbl">Notes</label><textarea name="notes" id="cus-notes" rows="2" class="inp"></textarea></div>
+        <div class="flex gap-2"><button class="btn flex-1">Save customer</button><button type="button" onclick="resetCus()" class="px-3 py-2 text-sm rounded-lg border">Clear</button></div>
+      </form>
+    </div>
+    <div id="cus-list-card" class="card overflow-hidden xl:col-span-2">
+      <div class="p-3 bg-slate-50 border-b flex flex-wrap justify-between items-center gap-2">
+        <h2 class="font-bold">Customers</h2>
+        <div class="flex flex-wrap gap-2"><select id="cus-fsub" onchange="renderCustomers()" class="inp !w-36 !p-1.5"><option value="">All types</option><option>PPPoE</option><option>Hotspot User</option></select>
+        <select id="cus-fstatus" onchange="renderCustomers()" class="inp !w-36 !p-1.5"><option value="">Any status</option><option>Active</option><option>Pending Install</option><option>Suspended</option><option>Disconnected</option></select>
+        <input oninput="filt(this,'cus-table')" placeholder="Name, phone, plot, ONU..." class="inp !w-48 !p-1.5"></div>
+      </div>
+      <div id="cus-table"></div>
+    </div>
+  </section>
+
+  <!-- HOTSPOTS -->
+  <section id="sec-hotspots" class="hidden grid xl:grid-cols-3 gap-6">
+    <div id="hs-form-card" class="card p-5 space-y-3 self-start">
+      <h2 id="hs-title" class="font-bold text-lg border-b pb-2">Add hotspot</h2>
+      <form id="form-hs" onsubmit="submitForm(event,'saveHotspot',()=>resetHs())" class="space-y-3">
+        <input type="hidden" name="mode" id="hs-mode" value="new"><input type="hidden" name="id" id="hs-id">
+        <div><label class="lbl">Hotspot name *</label><input name="name" id="hs-name" required class="inp" placeholder="Plot 14 Mall Hotspot"></div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="lbl">Plot no(s)</label><input name="plot" id="hs-plot" class="inp"></div>
+          <div><label class="lbl">Status</label><select name="status" id="hs-status" class="inp"><option>Active</option><option>Planned</option><option>Suspended</option><option>Decommissioned</option></select></div>
+        </div>
+        <div><label class="lbl">Location / coverage area</label><input name="location" id="hs-location" class="inp"></div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="lbl">Contact person</label><input name="contact" id="hs-contact" class="inp"></div>
+          <div><label class="lbl">Phone</label><input name="phone" id="hs-phone" class="inp"></div>
+        </div>
+        <div><label class="lbl">Uplink ONU (issued units only)</label><select name="onu" id="hs-onu" class="inp"></select></div>
+        <div><label class="lbl">Access points (comma-separated unit IDs)</label>
+          <div class="flex gap-2"><input name="aps" id="hs-aps" class="inp font-mono" placeholder="INV-RTR-0004, INV-RTR-0005"><select id="hs-ap-pick" onchange="hsAddAp(this)" class="inp !w-44"></select></div></div>
+        <div class="grid grid-cols-3 gap-3">
+          <div class="col-span-2"><label class="lbl">Connected to splitter</label><select name="splitterId" id="hs-spl" class="inp"></select></div>
+          <div><label class="lbl">Port</label><input name="port" id="hs-port" type="number" min="1" class="inp"></div>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="lbl">SSID</label><input name="ssid" id="hs-ssid" class="inp"></div>
+          <div><label class="lbl">Install date</label><input type="date" name="installDate" id="hs-install" class="inp"></div>
+        </div>
+        <div><label class="lbl">GenieACS device ID <span class="font-normal text-slate-400">(optional)</span></label><input name="genieId" id="hs-genie" class="inp font-mono"></div>
+        <div><label class="lbl">Notes</label><textarea name="notes" id="hs-notes" rows="2" class="inp"></textarea></div>
+        <div class="flex gap-2"><button class="btn flex-1">Save hotspot</button><button type="button" onclick="resetHs()" class="px-3 py-2 text-sm rounded-lg border">Clear</button></div>
+      </form>
+    </div>
+    <div id="hs-list-card" class="card overflow-hidden xl:col-span-2">
+      <div class="p-3 bg-slate-50 border-b flex justify-between items-center gap-2"><h2 class="font-bold">Hotspots</h2><input oninput="filt(this,'hs-table')" placeholder="Name, plot, contact..." class="inp !w-56 !p-1.5"></div>
+      <div id="hs-table"></div>
+    </div>
+  </section>
+
+  <!-- NETWORK MAP -->
+  <section id="sec-network" class="hidden grid xl:grid-cols-3 gap-6">
+    <div id="net-forms" class="space-y-6 self-start">
+      <div class="card p-5 space-y-3">
+        <h2 id="enc-title" class="font-bold text-lg border-b pb-2">Add enclosure</h2>
+        <form id="form-enc" onsubmit="submitForm(event,'saveEnclosure',()=>resetEnc())" class="space-y-3">
+          <input type="hidden" name="mode" id="enc-mode" value="new"><input type="hidden" name="id" id="enc-id">
+          <div class="grid grid-cols-2 gap-3">
+            <div><label class="lbl">Name / label *</label><input name="name" id="enc-name" required class="inp" placeholder="FAT-PLT4-01"></div>
+            <div><label class="lbl">Type</label><select name="type" id="enc-type" class="inp"><option>FAT Box</option><option>Joint Closure</option><option>Pole Box</option><option>Cabinet</option><option>Other</option></select></div>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div><label class="lbl">Location</label><input name="location" id="enc-location" class="inp"></div>
+            <div><label class="lbl">Plot / area served</label><input name="plot" id="enc-plot" class="inp"></div>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div><label class="lbl">GPS (lat, lng)</label><input name="coords" id="enc-coords" class="inp font-mono" placeholder="-1.2921, 36.8219"></div>
+            <div><label class="lbl">Capacity (ports)</label><input name="capacity" id="enc-capacity" type="number" min="0" class="inp"></div>
+          </div>
+          <div><label class="lbl">Notes</label><input name="notes" id="enc-notes" class="inp"></div>
+          <div class="flex gap-2"><button class="btn flex-1">Save enclosure</button><button type="button" onclick="resetEnc()" class="px-3 py-2 text-sm rounded-lg border">Clear</button></div>
+        </form>
+      </div>
+      <div class="card p-5 space-y-3">
+        <h2 id="spl-title" class="font-bold text-lg border-b pb-2">Add splitter</h2>
+        <form id="form-spl" onsubmit="submitForm(event,'saveSplitter',()=>resetSpl())" class="space-y-3">
+          <input type="hidden" name="mode" id="spl-mode" value="new"><input type="hidden" name="id" id="spl-id">
+          <div class="grid grid-cols-2 gap-3">
+            <div><label class="lbl">Name / label *</label><input name="name" id="spl-name" required class="inp" placeholder="PLT4-L1"></div>
+            <div><label class="lbl">Split ratio</label><select name="ratio" id="spl-ratio" class="inp"><option>1:2</option><option>1:4</option><option selected>1:8</option><option>1:16</option><option>1:32</option><option>1:64</option></select></div>
+          </div>
+          <div><label class="lbl">Fed from splitter <span class="font-normal text-slate-400">(blank = straight from OLT)</span></label><select name="parent" id="spl-parent" class="inp"></select></div>
+          <div class="grid grid-cols-2 gap-3">
+            <div><label class="lbl">Parent port</label><input name="parentPort" id="spl-pport" type="number" min="1" class="inp"></div>
+            <div><label class="lbl">OLT / PON port</label><input name="olt" id="spl-olt" class="inp" placeholder="OLT1 / 0/1/3"></div>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div><label class="lbl">Sits in enclosure</label><select name="enclosureId" id="spl-enc" class="inp"></select></div>
+            <div><label class="lbl">Status</label><select name="status" id="spl-status" class="inp"><option>Active</option><option>Planned</option><option>Decommissioned</option></select></div>
+          </div>
+          <div><label class="lbl">Notes</label><input name="notes" id="spl-notes" class="inp"></div>
+          <div class="flex gap-2"><button class="btn flex-1">Save splitter</button><button type="button" onclick="resetSpl()" class="px-3 py-2 text-sm rounded-lg border">Clear</button></div>
+        </form>
+      </div>
+    </div>
+    <div id="net-main" class="xl:col-span-2 space-y-6">
+      <div id="net-insights-card" class="card overflow-hidden hidden"><div class="p-3 bg-slate-50 border-b font-bold"><i class="fa-solid fa-stethoscope mr-2 text-rose-500"></i>Troubleshooting &amp; replacement insights</div><div id="net-insights" class="p-3 space-y-3 text-sm"></div></div>
+      <div class="card overflow-hidden"><div class="p-3 bg-slate-50 border-b font-bold"><i class="fa-solid fa-sitemap mr-2 text-indigo-600"></i>Network tree <span class="text-xs font-normal text-slate-500">OLT → splitter → port → customer / hotspot</span></div><div id="net-tree" class="p-3"></div></div>
+      <div class="card overflow-hidden"><div class="p-3 bg-slate-50 border-b font-bold">Enclosures</div><div id="enc-table"></div></div>
+      <div class="card overflow-hidden"><div class="p-3 bg-slate-50 border-b font-bold">Splitters</div><div id="spl-table"></div></div>
+    </div>
+  </section>
+
+  <!-- BATCH SERIALIZED STOCK IN -->
+  <section id="sec-stockin" class="hidden max-w-4xl mx-auto">
+    <div class="card p-6 space-y-4">
+      <h2 class="text-lg font-bold border-b pb-2"><i class="fa-solid fa-boxes-packing mr-2 text-indigo-600"></i>Serialized stock in - by model</h2>
+      <form id="form-stockin" onsubmit="submitStockIn(event)" class="space-y-4">
+        <div class="grid sm:grid-cols-2 gap-4">
+          <div><label class="lbl">Model / SKU *</label><select id="si-sku" class="inp" required></select></div>
+          <div><label class="lbl">Receiving site / location</label><input id="si-site" value="Main Store" class="inp" required></div>
+        </div>
+        <div>
+          <div class="flex flex-wrap justify-between items-center gap-2 mb-2">
+            <label class="lbl !mb-0">Units - one row per device (<span id="si-count">0 unit(s)</span>)</label>
+            <div class="flex flex-wrap gap-2">
+              <button type="button" onclick="siScanSeq()" class="btn-sm !bg-emerald-600 text-white"><i class="fa-solid fa-barcode mr-1"></i>Scan in sequence</button>
+              <button type="button" onclick="siPaste()" class="btn-sm text-white"><i class="fa-solid fa-paste mr-1"></i>Paste list</button>
+              <button type="button" onclick="addSiRow()" class="btn-sm !bg-indigo-600 text-white"><i class="fa-solid fa-plus mr-1"></i>Add row</button>
+            </div>
+          </div>
+          <div class="border rounded-lg overflow-x-auto">
+            <table class="w-full text-sm"><thead class="bg-slate-50 text-xs text-slate-500 border-b"><tr><th class="p-2 text-left w-8">#</th><th class="p-2 text-left">Serial number (S/N)</th><th class="p-2 text-left">MAC (12 hex)</th><th class="p-2 text-left">Product ID</th><th class="p-2 text-left">Condition</th><th class="p-2 text-left">Remarks</th><th class="p-2 w-10"></th></tr></thead><tbody id="si-rows"></tbody></table>
+          </div>
+          <p class="text-xs text-slate-500 mt-1">Enter in the S/N box moves to MAC, Enter in MAC starts the next row, so a USB scanner works hands-free. Duplicate S/N or MAC are rejected.</p>
+        </div>
+        <div><label class="lbl">Reference / supplier / delivery note</label><textarea id="si-notes" rows="2" class="inp"></textarea></div>
+        <button id="si-btn" class="btn w-full">Receive units into stock</button>
+      </form>
+    </div>
+  </section>
+
+  <!-- UNITS -->
+  <section id="sec-units" class="hidden grid xl:grid-cols-3 gap-6">
+    <div class="card p-5 space-y-3 self-start">
+      <h2 class="font-bold text-lg border-b pb-2">Update serialized unit</h2>
+      <form onsubmit="submitForm(event,'updateSerializedDevice')" class="space-y-3">
+        <div><label class="lbl">Unit</label><select name="itemID" id="dev-id" onchange="loadDev()" required class="inp"></select></div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="lbl">Status</label><select name="status" id="dev-status" class="inp"><option>In Stock</option><option>Issued / Out</option><option>Under Repair</option><option>Decommissioned</option></select></div>
+          <div><label class="lbl">Condition</label><select name="condition" id="dev-cond" class="inp"><option>New</option><option>Good</option><option>Faulty</option><option>Not Recorded</option></select></div>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="lbl">Location / site</label><input name="location" id="dev-loc" class="inp"></div>
+          <div><label class="lbl">Custodian</label><input name="custodian" id="dev-cust" class="inp"></div>
+        </div>
+        <div><label class="lbl">Serial number (S/N)</label><div class="flex gap-2"><input name="sn" id="dev-sn" class="inp font-mono"><button type="button" onclick="scanFor(c=>{$('dev-sn').value=c})" class="btn !bg-emerald-600"><i class="fa-solid fa-barcode"></i></button></div></div>
+        <div><label class="lbl">MAC address</label><div class="flex gap-2"><input name="mac" id="dev-mac" class="inp font-mono"><button type="button" onclick="scanFor(c=>{$('dev-mac').value=c})" class="btn !bg-emerald-600"><i class="fa-solid fa-barcode"></i></button></div></div>
+        <div><label class="lbl">Product ID</label><input name="productId" id="dev-pid" class="inp font-mono"></div>
+        <div><label class="lbl">Add note</label><input name="notes" class="inp" placeholder="Reason for update..."></div>
+        <button class="btn w-full !bg-emerald-600 hover:!bg-emerald-700">Save unit</button>
+      </form>
+    </div>
+    <div class="card overflow-hidden xl:col-span-2">
+      <div class="p-3 bg-slate-50 border-b flex flex-wrap justify-between items-center gap-2">
+        <div class="flex items-center gap-2"><h2 class="font-bold">Serialized units</h2><button type="button" onclick="switchTab('stockin')" class="btn-sm !bg-indigo-600 text-white">+ Add units</button></div>
+        <div class="flex gap-2"><select id="unit-filter" onchange="renderUnits()" class="inp !w-32 !p-1.5"><option value="">All</option><option>In Stock</option><option value="out">Not in stock</option><option value="missing">Missing S/N or MAC</option></select><input oninput="filt(this,'unit-table')" placeholder="S/N, MAC, ID..." class="inp !w-48 !p-1.5"></div>
+      </div>
+      <div id="unit-table" class="max-h-[70vh] overflow-y-auto"></div>
+    </div>
+  </section>
+
+  <!-- AUDIT TRAIL -->
+  <section id="sec-audit" class="hidden card overflow-hidden">
+    <div class="p-3 bg-slate-50 border-b flex flex-wrap justify-between items-center gap-2">
+      <div><h2 class="font-bold">Audit trail</h2><p class="text-xs text-slate-500">Append-only, hash-chained. Edited or deleted rows are detected by Verify.</p></div>
+      <div class="flex flex-wrap gap-2">
+        <select id="aud-type" onchange="loadAudit()" class="inp !w-44 !p-1.5"><option value="">All records</option><option>Serialized Asset</option><option>Requisition</option><option>Procurement</option><option>Catalog Item</option><option>Project</option><option>Document</option><option>Ticket</option><option>Task</option><option>User</option></select>
+        <input oninput="filt(this,'aud-table')" placeholder="Search..." class="inp !w-44 !p-1.5">
+        <button onclick="verifyAudit()" class="btn-sm !bg-emerald-600 text-white"><i class="fa-solid fa-shield-halved mr-1"></i>Verify integrity</button>
+      </div>
+    </div>
+    <div id="aud-table" class="max-h-[75vh] overflow-y-auto"></div>
+  </section>
+
+<!-- TICKETS -->
+  <section id="sec-tickets" class="hidden grid xl:grid-cols-3 gap-6">
+    <div id="ticket-form-card" class="card p-5 space-y-3 self-start">
+      <h2 class="font-bold text-lg border-b pb-2">Log customer ticket</h2>
+      <form onsubmit="submitForm(event,'logCustomerIssue',()=>tkEntity(''))" class="space-y-3">
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="lbl">Registered customer</label><select name="customerId" id="tk-cust" onchange="tkEntity('C')" class="inp"></select></div>
+          <div><label class="lbl">Hotspot</label><select name="hotspotId" id="tk-hsp" onchange="tkEntity('H')" class="inp"></select></div>
+        </div>
+        <div><label class="lbl">Device concerned (ONU / AP)</label><select name="deviceId" id="tk-dev" class="inp"></select></div>
+        <div><label class="lbl">Customer name / account *</label><input name="customerName" id="tk-name" required class="inp" placeholder="Filled from the selection, or type a name"></div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="lbl">Issue</label><select name="issueCategory" class="inp"><option>No Optical Link</option><option>Faulty ONT / Router</option><option>High Loss / Splice Needed</option><option>Wi-Fi / Password Reset</option><option>New Installation</option><option>Relocation</option><option>Other</option></select></div>
+          <div><label class="lbl">Priority</label><select name="priority" class="inp"><option>Normal</option><option>High</option><option>Critical</option><option>Low</option></select></div>
+        </div>
+        <div><label class="lbl">Assign technician</label><select name="assignedTech" id="tk-tech" class="inp"></select></div>
+        <label class="flex items-center gap-2 text-sm"><input type="checkbox" name="createTask" checked> Also create a linked task for the technician</label>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="lbl">Old device S/N</label><input name="oldDeviceSN" class="inp" placeholder="INV-ONT-0005"></div>
+          <div><label class="lbl">New device S/N</label><input name="newDeviceSN" class="inp" placeholder="INV-ONT-0013"></div>
+        </div>
+        <div><label class="lbl">Details</label><textarea name="notes" rows="2" class="inp"></textarea></div>
+        <button class="btn w-full">Create ticket</button>
+      </form>
+    </div>
+    <div id="ticket-list-card" class="card overflow-hidden xl:col-span-2">
+      <div class="p-3 bg-slate-50 border-b flex flex-wrap justify-between items-center gap-2">
+        <h2 class="font-bold">Tickets</h2>
+        <div class="flex gap-2"><select id="tk-filter" onchange="renderTickets()" class="inp !w-36 !p-1.5"><option value="active">Active</option><option value="">All</option><option>Open</option><option>Assigned</option><option>In Progress</option><option>Resolved</option><option>Closed</option></select>
+        <input oninput="filt(this,'tk-table')" placeholder="Search..." class="inp !w-44 !p-1.5"></div>
+      </div>
+      <div id="tk-table"></div>
+    </div>
+  </section>
+
+  <!-- TASKS -->
+  <section id="sec-tasks" class="hidden grid xl:grid-cols-3 gap-6">
+    <div id="task-form-card" class="card p-5 space-y-3 self-start">
+      <h2 class="font-bold text-lg border-b pb-2">Assign task</h2>
+      <form onsubmit="submitForm(event,'createTask')" class="space-y-3">
+        <div><label class="lbl">Title *</label><input name="title" required class="inp" placeholder="Replace ONT at Plot 4"></div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="lbl">Assign to</label><select name="assignee" id="task-assignee" required class="inp"></select></div>
+          <div><label class="lbl">Priority</label><select name="priority" class="inp"><option>Normal</option><option>High</option><option>Critical</option><option>Low</option></select></div>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="lbl">Stock needed</label><select name="requiredSku" id="task-sku" class="inp"></select></div>
+          <div><label class="lbl">Qty</label><input type="number" name="requiredQty" min="1" value="1" class="inp"></div>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="lbl">Customer / site</label><input name="site" class="inp"></div>
+          <div><label class="lbl">Ticket / reference</label><input name="reference" list="tk-ids" class="inp" placeholder="TKT-4491"><datalist id="tk-ids"></datalist></div>
+        </div>
+        <div><label class="lbl">Project</label><select name="projectId" id="task-project" class="inp"></select></div>
+        <div><label class="lbl">Instructions</label><textarea name="notes" rows="2" class="inp"></textarea></div>
+        <button class="btn w-full">Assign task</button>
+      </form>
+    </div>
+    <div id="task-list-card" class="card overflow-hidden xl:col-span-2">
+      <div class="p-3 bg-slate-50 border-b flex flex-wrap justify-between items-center gap-2">
+        <h2 id="task-title" class="font-bold">Tasks</h2>
+        <div class="flex gap-2"><select id="task-filter" onchange="renderTasks()" class="inp !w-40 !p-1.5"><option value="active">Active</option><option value="">All</option><option>Assigned</option><option>Awaiting Stock</option><option>Ready</option><option>In Progress</option><option>Completed</option><option>Cancelled</option></select>
+        <input oninput="filt(this,'task-table')" placeholder="Search..." class="inp !w-44 !p-1.5"></div>
+      </div>
+      <div id="task-table"></div>
+    </div>
+  </section>
+
+  <!-- REQUISITIONS -->
+  <section id="sec-reqs" class="hidden grid xl:grid-cols-3 gap-6">
+    <div id="req-form-card" class="card p-5 space-y-3 self-start">
+      <h2 class="font-bold text-lg border-b pb-2">Request material</h2>
+      <form onsubmit="submitForm(event,'submitTechnicianRequisition',()=>filterReqItems())" class="space-y-3">
+        <div><label class="lbl">Project</label><select name="projectId" id="req-project" onchange="filterReqItems()" class="inp"></select></div>
+        <div><label class="lbl">Item type</label>
+          <select id="req-track" onchange="filterReqItems()" class="inp"><option value="">All types</option><option value="Bulk">Bulk (cable, consumables)</option><option value="Non-Serialized">Non-serialized (counted items)</option><option value="Serialized">Serialized (ONT, routers, FAT - by S/N)</option></select></div>
+        <div><label class="lbl">Item</label><select name="itemID" id="req-sku" required class="inp"></select></div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="lbl">Quantity</label><input type="number" name="quantity" min="1" value="1" required class="inp"></div>
+          <div><label class="lbl">Reason / ticket</label><input name="reason" class="inp" placeholder="Installation TKT-1002"></div>
+        </div>
+        <p class="text-xs text-slate-500">Project-only items appear only for their own project. High-value or over-budget requests also need Finance approval.</p>
+        <button class="btn w-full">Submit request</button>
+      </form>
+    </div>
+    <div class="card overflow-hidden xl:col-span-2">
+      <div class="p-3 bg-slate-50 border-b flex flex-wrap justify-between items-center gap-2">
+        <h2 id="req-title" class="font-bold">Requisitions</h2>
+        <select id="req-filter" onchange="renderReqs()" class="inp !w-44 !p-1.5"><option value="active">Needs action</option><option value="">All</option><option>Pending Approval</option><option>Pending Finance</option><option>Approved - Ready</option><option>Awaiting Stock</option><option>Issued</option><option>Rejected</option><option>Cancelled</option></select>
+      </div>
+      <div id="req-table"></div>
+    </div>
+  </section>
+
+  <!-- PROJECTS -->
+  <section id="sec-projects" class="hidden grid xl:grid-cols-3 gap-6">
+    <div id="prj-form-card" class="card p-5 space-y-3 self-start">
+      <h2 id="prj-title" class="font-bold text-lg border-b pb-2">New project</h2>
+      <form id="form-prj" onsubmit="submitForm(event,'saveProject',()=>resetPrj())" class="space-y-3">
+        <input type="hidden" name="mode" id="prj-mode" value="new"><input type="hidden" name="id" id="prj-id">
+        <div><label class="lbl">Project name *</label><input name="name" id="prj-name" required class="inp" placeholder="FTTH Extension Zone 4"></div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="lbl">Type</label><select name="type" id="prj-type" class="inp"><option>Deployment</option><option>Upgrade</option><option>Maintenance</option><option>Expansion</option><option>Other</option></select></div>
+          <div><label class="lbl">Status</label><select name="status" id="prj-status" class="inp"><option>Planning</option><option>Active</option><option>On Hold</option><option>Completed</option><option>Cancelled</option></select></div>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="lbl">Location / target FAT</label><input name="location" id="prj-loc" class="inp" placeholder="FAT-PLT4-01"></div>
+          <div><label class="lbl">Project manager</label><select name="manager" id="prj-manager" class="inp"></select></div>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="lbl">Start</label><input type="date" name="start" id="prj-start" class="inp"></div>
+          <div><label class="lbl">End</label><input type="date" name="end" id="prj-end" class="inp"></div>
+        </div>
+        <div><label class="lbl">Budget (KES)</label><input type="number" min="0" step="any" name="budget" id="prj-budget" class="inp"></div>
+        <div><label class="lbl">Notes</label><textarea name="notes" id="prj-notes" rows="2" class="inp"></textarea></div>
+        <div class="flex gap-2"><button class="btn flex-1">Save project</button><button type="button" onclick="resetPrj()" class="px-3 py-2 text-sm rounded-lg border">Clear</button></div>
+      </form>
+    </div>
+    <div id="prj-list-card" class="card overflow-hidden xl:col-span-2">
+      <div class="p-3 bg-slate-50 border-b flex justify-between items-center gap-2"><h2 class="font-bold">Projects</h2><input oninput="filt(this,'prj-table')" placeholder="Search..." class="inp !w-56 !p-1.5"></div>
+      <div id="prj-table"></div>
+    </div>
+  </section>
+
+  <!-- PROCUREMENT -->
+  <section id="sec-procure" class="hidden grid xl:grid-cols-3 gap-6">
+    <div id="proc-form-card" class="card p-5 space-y-3 self-start">
+      <h2 class="font-bold text-lg border-b pb-2">Purchase request</h2>
+      <form onsubmit="submitForm(event,'submitProcurement')" class="space-y-3">
+        <div><label class="lbl">Item</label><select name="itemID" id="proc-sku" required class="inp"></select></div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="lbl">Quantity</label><input type="number" name="quantity" min="1" value="1" required class="inp"></div>
+          <div><label class="lbl">Project</label><select name="projectId" id="proc-project" class="inp"></select></div>
+        </div>
+        <div><label class="lbl">Preferred supplier</label><input name="supplier" class="inp"></div>
+        <div><label class="lbl">Reason / notes</label><textarea name="notes" rows="2" class="inp"></textarea></div>
+        <p class="text-xs text-slate-500">Flow: request → Finance approval → order → receive (stock-in) → receipt note.</p>
+        <button class="btn w-full">Send to Finance</button>
+      </form>
+    </div>
+    <div id="proc-list-card" class="card overflow-hidden xl:col-span-2">
+      <div class="p-3 bg-slate-50 border-b flex flex-wrap justify-between items-center gap-2">
+        <h2 class="font-bold">Purchases</h2>
+        <select id="proc-filter" onchange="renderProc()" class="inp !w-44 !p-1.5"><option value="active">Open</option><option value="">All</option><option>Pending Finance</option><option>Approved</option><option>Ordered</option><option>Received</option><option>Rejected</option><option>Cancelled</option></select>
+      </div>
+      <div id="proc-table"></div>
+    </div>
+  </section>
+
+  <!-- DELIVERY / RECEIPT NOTES -->
+  <section id="sec-docs" class="hidden card overflow-hidden">
+    <div class="p-3 bg-slate-50 border-b flex flex-wrap justify-between items-center gap-2">
+      <div><h2 class="font-bold">Delivery &amp; receipt notes</h2><p class="text-xs text-slate-500">Create them from an Issued requisition (delivery note) or a Received purchase (receipt note). PDFs are stored in Google Drive.</p></div>
+      <input oninput="filt(this,'doc-table')" placeholder="Search..." class="inp !w-56 !p-1.5">
+    </div>
+    <div id="doc-table"></div>
+  </section>
+
+  <!-- LEDGER -->
+  <section id="sec-ledger" class="hidden card overflow-hidden">
+    <div class="p-3 bg-slate-50 border-b flex justify-between items-center gap-2"><h2 class="font-bold">Transaction audit history</h2><input oninput="filt(this,'ledger-table')" placeholder="Search..." class="inp !w-56 !p-1.5"></div>
+    <div id="ledger-table"></div>
+  </section>
+
+  <!-- USERS -->
+  <section id="sec-users" class="hidden grid xl:grid-cols-3 gap-6">
+    <div class="card p-5 space-y-3 self-start">
+      <h2 id="usr-title" class="font-bold text-lg border-b pb-2">Add user</h2>
+      <form id="form-usr" onsubmit="submitForm(event,'saveUser',()=>resetUsr())" class="space-y-3">
+        <div><label class="lbl">Email *</label><input name="email" id="usr-email" type="email" required class="inp"></div>
+        <div><label class="lbl">Name *</label><input name="name" id="usr-name" class="inp"></div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="lbl">Role</label><select name="role" id="usr-role" class="inp"><option>Admin</option><option>Store Manager</option><option>Finance</option><option>Project Manager</option><option>Support</option><option selected>Technician</option></select></div>
+          <div><label class="lbl">Status</label><select name="status" id="usr-status" class="inp"><option>Active</option><option>Inactive</option></select></div>
+        </div>
+        <div><label class="lbl">Password <span class="font-normal text-slate-400">(blank = keep current)</span></label><input name="password" type="password" class="inp" autocomplete="new-password"></div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="lbl">Site / station</label><input name="site" id="usr-site" class="inp"></div>
+          <div><label class="lbl">Contact</label><input name="contact" id="usr-contact" class="inp"></div>
+        </div>
+        <div class="flex gap-2"><button class="btn flex-1">Save user</button><button type="button" onclick="resetUsr()" class="px-3 py-2 text-sm rounded-lg border">Clear</button></div>
+      </form>
+    </div>
+    <div class="card overflow-hidden xl:col-span-2"><div class="p-3 bg-slate-50 border-b font-bold">Users</div><div id="usr-table"></div></div>
+  </section>
+</main>
+</div>
+
+<!-- BOTTOM BAR (mobile) -->
+<div id="more-sheet" class="hidden md:hidden fixed bottom-16 inset-x-0 z-40 bg-white border-t border-slate-200 shadow-2xl rounded-t-2xl p-3 space-y-1">
+  <p id="more-user" class="text-xs text-slate-500 px-2 pb-1"></p>
+  <div id="more-list" class="space-y-1"></div>
+  <div class="grid grid-cols-2 gap-2 pt-2 border-t">
+    <button onclick="pwModal();toggleMore(false)" class="text-sm py-2 rounded-lg border"><i class="fa-solid fa-key mr-1"></i>Password</button>
+    <button onclick="doLogout()" class="text-sm py-2 rounded-lg border"><i class="fa-solid fa-right-from-bracket mr-1"></i>Log out</button>
+  </div>
+</div>
+<nav id="bottom-nav" class="md:hidden fixed bottom-0 inset-x-0 z-40 h-16 bg-white border-t border-slate-200 flex" style="padding-bottom:env(safe-area-inset-bottom)"></nav>
+
+<!-- BARCODE / QR SCANNER -->
+<div id="scan-modal" class="hidden fixed inset-0 bg-slate-900/70 z-50 flex items-center justify-center p-4">
+  <div class="bg-white max-w-md w-full rounded-2xl shadow-2xl p-5 space-y-3">
+    <div class="flex justify-between items-center"><h3 class="font-bold text-lg"><i class="fa-solid fa-barcode mr-2 text-emerald-600"></i>Scan barcode / QR</h3><button onclick="closeScan()" class="text-2xl text-slate-400">&times;</button></div>
+    <div id="qr-reader" class="w-full rounded-lg overflow-hidden bg-slate-900 min-h-[200px]"></div>
+    <div id="qr-reader-file" class="hidden"></div>
+    <p id="scan-msg" class="text-xs text-amber-700"></p>
+    <label class="btn !bg-slate-700 cursor-pointer text-center block"><i class="fa-solid fa-camera mr-1"></i>Take / choose a photo of the code<input type="file" accept="image/*" capture="environment" class="hidden" onchange="scanFile(this)"></label>
+    <div><label class="lbl">Or type / use a USB scanner (S/N, MAC, INV-… or SKU)</label>
+      <div class="flex gap-2"><input id="scan-result" class="inp font-mono" onkeydown="if(event.key==='Enter'){event.preventDefault();submitScan()}"><button type="button" onclick="submitScan()" class="btn">Go</button></div></div>
+  </div>
+</div>
+
+<!-- GENERIC MODAL -->
+<div id="modal" class="hidden fixed inset-0 bg-slate-900/60 z-40 flex items-center justify-center p-4">
+  <form id="modal-form" class="bg-white w-full max-w-md rounded-xl shadow-xl p-5 space-y-3 max-h-[90vh] overflow-y-auto">
+    <h3 id="modal-title" class="font-bold text-lg"></h3>
+    <div id="modal-body" class="space-y-3"></div>
+    <div class="flex justify-end gap-2 pt-2"><button type="button" onclick="closeModal()" class="px-3 py-2 text-sm rounded-lg border">Cancel</button><button id="modal-ok" class="btn">Confirm</button></div>
+  </form>
+</div>
+
+<script>
+const BOOT = <?!= boot ?>;
+let token = null, D = {}, me = null, can = {}, current = 'dashboard', modalCb = null;
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const money = n => 'KES ' + Number(n || 0).toLocaleString('en-KE', {maximumFractionDigits: 0});
+const SERIAL_PREFIX = ['SKU-ONT', 'SKU-RTR', 'SKU-NET', 'SKU-FAT'];
+const isSerSku = s => SERIAL_PREFIX.some(p => String(s || '').toUpperCase().includes(p));
+const sameMe = v => { v = String(v || '').trim().toLowerCase(); return !!v && (v === me.name.toLowerCase() || v === me.email); };
+
+/* ---------- plumbing ---------- */
+function api(fn, args, ok) {
+  const run = google.script.run
+    .withSuccessHandler(r => { if (r && r.authExpired) { toast(r.message, true); return doLogout(true); } ok(r); })
+    .withFailureHandler(e => toast('Error: ' + (e.message || e), true));
+  run[fn].apply(run, args);
+}
+function toast(msg, err) {
+  const t = $('toast'); $('toast-msg').textContent = msg;
+  t.className = 'mb-4 p-3 rounded-lg text-sm font-medium flex justify-between border ' + (err ? 'bg-rose-50 border-rose-200 text-rose-800' : 'bg-emerald-50 border-emerald-200 text-emerald-800');
+  clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.add('hidden'), 6000);
+  window.scrollTo({top: 0, behavior: 'smooth'});
+}
+function submitForm(e, fn, after) {
+  e.preventDefault();
+  const form = e.target, btn = form.querySelector('button:not([type=button])'), data = {};
+  new FormData(form).forEach((v, k) => data[k] = v);
+  form.querySelectorAll('input[type=checkbox]').forEach(c => data[c.name] = c.checked);
+  if (btn) btn.disabled = true;
+  api(fn, [token, data], r => {
+    if (btn) btn.disabled = false;
+    toast(r.message, !r.success);
+    if (r.success) { form.reset(); if (after) after(); loadData(); }
+  });
+}
+function filt(input, id) {
+  const q = input.value.toLowerCase();
+  $(id).querySelectorAll('tbody tr').forEach(r => r.style.display = r.textContent.toLowerCase().includes(q) ? '' : 'none');
+}
+function table(heads, rows, empty) {
+  return `<div class="overflow-x-auto"><table class="w-full text-sm"><thead class="bg-slate-100 text-xs text-slate-600"><tr>${heads.map(h => `<th class="th">${h}</th>`).join('')}</tr></thead><tbody>${
+    rows.length ? rows.map(r => `<tr class="hover:bg-slate-50">${r.map(c => `<td class="td">${c}</td>`).join('')}</tr>`).join('') : `<tr><td class="td text-center text-slate-400 py-6" colspan="${heads.length}">${empty || 'Nothing here yet.'}</td></tr>`}</tbody></table></div>`;
+}
+const BADGE = {Open:'amber','Pending Approval':'amber','Awaiting Stock':'amber',Assigned:'indigo',Ready:'indigo','Approved - Ready':'indigo','In Progress':'sky',Resolved:'emerald',Completed:'emerald',Issued:'emerald',Closed:'slate',Cancelled:'slate',Rejected:'rose','Low Stock':'amber','Out of Stock':'rose','In Stock':'emerald'};
+Object.assign(BADGE, {'Pending Finance':'amber', Ordered:'sky', Received:'emerald', Approved:'indigo', Paid:'emerald', Pending:'amber', 'Tracking only':'slate', Planning:'slate', Active:'emerald', 'On Hold':'amber', Completed:'emerald'});
+const badge = s => { const c = BADGE[s] || 'slate'; return `<span class="px-2 py-0.5 rounded text-xs font-semibold bg-${c}-100 text-${c}-800 whitespace-nowrap">${esc(s)}</span>`; };
+const btn = (label, js, color) => `<button onclick="${js}" class="btn-sm bg-${color || 'slate'}-600 hover:bg-${color || 'slate'}-500 mr-1">${label}</button>`;
+
+/* ---------- modal ---------- */
+function openModal(title, body, okLabel, cb) {
+  $('modal-title').textContent = title; $('modal-body').innerHTML = body; $('modal-ok').textContent = okLabel || 'Confirm';
+  modalCb = cb; $('modal').classList.remove('hidden');
+}
+function closeModal() { $('modal').classList.add('hidden'); modalCb = null; }
+$('modal-form').onsubmit = e => {
+  e.preventDefault();
+  const data = {}; new FormData(e.target).forEach((v, k) => data[k] = k in data ? [].concat(data[k], v) : v);
+  if (modalCb) modalCb(data);
+};
+function runModal(fn, args, okMsg) {
+  $('modal-ok').disabled = true;
+  api(fn, args, r => { $('modal-ok').disabled = false; toast(r.message, !r.success); if (r.success) { closeModal(); loadData(); } });
+}
+
+/* ---------- auth ---------- */
+function loginMsg(msg, ok) { const el = $('login-msg'); el.textContent = msg; el.className = 'text-xs text-center p-2.5 rounded-lg border ' + (ok ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-rose-50 border-rose-200 text-rose-700'); }
+function doLogin(e) {
+  e.preventDefault(); const b = $('btn-login'); b.disabled = true; b.textContent = 'Checking...';
+  api('authenticateUser', [$('login-email').value.trim(), $('login-password').value.trim()], r => {
+    b.disabled = false; b.textContent = 'Log in';
+    if (!r.success) return loginMsg(r.message);
+    startSession(r.token);
+  });
+}
+function sendMagic() {
+  const em = $('magic-email').value.trim(); if (!em) return loginMsg('Enter your email first.');
+  $('btn-magic').disabled = true;
+  api('sendMagicLink', [em], r => { $('btn-magic').disabled = false; loginMsg(r.message, true); });
+}
+function startSession(t) { token = t; try { sessionStorage.setItem('tok', t); } catch (e) {} loadData(); }
+function doLogout(silent) {
+  if (token && !silent) google.script.run.logout(token);
+  token = null; try { sessionStorage.removeItem('tok'); } catch (e) {}
+  $('login-modal').classList.remove('hidden'); $('login-password').value = '';
+}
+function pwModal() {
+  openModal('Change password', '<div><label class="lbl">Current password</label><input type="password" name="o" required class="inp"></div><div><label class="lbl">New password (6+ characters)</label><input type="password" name="n" required minlength="6" class="inp"></div>', 'Change password', d => runModal('changePassword', [token, d.o, d.n]));
+}
+window.onload = () => {
+  $('txn-date').valueAsDate = new Date();
+  if (BOOT.error) loginMsg(BOOT.error);
+  if (BOOT.session) startSession(BOOT.session);
+  else { try { token = sessionStorage.getItem('tok'); } catch (e) {} if (token) loadData(); }
+};
+
+/* ---------- data ---------- */
+function loadData() {
+  $('spin').classList.add('fa-spin');
+  api('getInitialData', [token], r => {
+    $('spin').classList.remove('fa-spin');
+    if (!r.success) { toast(r.message, true); return; }
+    D = r; me = r.user; can = r.can;
+    $('login-modal').classList.add('hidden'); $('user-badge').textContent = `${me.name} (${me.role})`;
+    buildTabs(); renderAll();
+  });
+}
+const TABS = [
+  ['dashboard', 'Dashboard', 'chart-pie', () => true, 'Home'],
+  ['projects', 'Projects', 'diagram-project', () => true, 'Projects'],
+  ['customers', 'Customers', 'users', () => can.viewNetwork, 'Customers'],
+  ['hotspots', 'Hotspots', 'wifi', () => can.viewNetwork, 'Hotspots'],
+  ['network', 'Network Map', 'sitemap', () => can.viewNetwork, 'Network'],
+  ['reqs', 'Requisitions', 'clipboard-list', () => can.requestMaterial || can.approveReq || can.approveFinance || can.viewAllReqs, 'Requests'],
+  ['tasks', 'Tasks', 'user-check', () => true, 'Tasks'],
+  ['tickets', 'Tickets', 'headset', () => !['Finance', 'Project Manager'].includes(me.role), 'Tickets'],
+  ['procure', 'Procurement', 'truck', () => can.viewProcurement, 'Purchases'],
+  ['catalog', 'Item Catalog', 'boxes-stacked', () => can.manageCatalog, 'Catalog'],
+  ['stockin', 'Stock In (Serialized)', 'boxes-packing', () => can.moveStock, 'Receive'],
+  ['movement', 'Record Movement', 'cart-plus', () => can.moveStock, 'Move'],
+  ['units', 'Serialized Units', 'sliders', () => can.manageDevices, 'Units'],
+  ['docs', 'Delivery Notes', 'file-pdf', () => can.viewDocs, 'Notes'],
+  ['ledger', 'Audit Ledger', 'list-check', () => can.viewLedger, 'Ledger'],
+  ['audit', 'Audit Trail', 'clock-rotate-left', () => can.viewAuditAll, 'Audit'],
+  ['users', 'Users', 'users-gear', () => can.manageUsers, 'Users']
+];
+let visTabs = [];
+function buildTabs() {
+  visTabs = TABS.filter(t => t[3]());
+  if (!visTabs.some(t => t[0] === current)) current = 'dashboard';
+  $('side-nav').innerHTML = visTabs.map(t => `<button id="tab-${t[0]}" onclick="switchTab('${t[0]}')" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-slate-300 hover:bg-slate-800 transition"><i class="fa-solid fa-${t[2]} w-5 text-center"></i><span>${t[1]}</span><span id="badge-${t[0]}" class="ml-auto hidden px-1.5 min-w-[1.25rem] text-center text-[11px] font-bold rounded-full bg-rose-500 text-white"></span></button>`).join('');
+  const inBar = visTabs.length > 5 ? visTabs.slice(0, 4) : visTabs, more = visTabs.slice(inBar.length);
+  const mb = (id, ic, lb, js, extra) => `<button id="${id}" onclick="${js}" class="relative flex-1 flex flex-col items-center justify-center gap-0.5 text-[11px] text-slate-500"><i class="fa-solid fa-${ic} text-lg"></i>${lb}${extra || ''}</button>`;
+  $('bottom-nav').innerHTML = inBar.map(t => mb('mtab-' + t[0], t[2], t[4], `switchTab('${t[0]}')`, `<span id="mbadge-${t[0]}" class="hidden absolute top-1 left-1/2 ml-2 px-1 text-[10px] font-bold rounded-full bg-rose-500 text-white"></span>`)).join('') + (more.length ? mb('mtab-more', 'ellipsis', 'More', 'toggleMore()') : '');
+  $('more-list').innerHTML = more.map(t => `<button onclick="switchTab('${t[0]}')" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm hover:bg-slate-100"><i class="fa-solid fa-${t[2]} w-5 text-center text-slate-500"></i>${t[1]}</button>`).join('');
+  $('more-user').textContent = me ? `${me.name} (${me.role})` : '';
+  switchTab(current);
+}
+function toggleMore(force) { const el = $('more-sheet'); el.classList.toggle('hidden', force === undefined ? el.classList.contains('hidden') ? false : true : !force); }
+function switchTab(id) {
+  current = id; toggleMore(false);
+  document.querySelectorAll('main > section').forEach(s => s.classList.add('hidden'));
+  $('sec-' + id).classList.remove('hidden');
+  const t = TABS.find(x => x[0] === id); $('page-title').textContent = t ? t[1] : '';
+  const inBar = visTabs.length > 5 ? visTabs.slice(0, 4).map(x => x[0]) : visTabs.map(x => x[0]);
+  visTabs.forEach(v => {
+    const on = v[0] === id, sb = $('tab-' + v[0]);
+    sb.classList.toggle('bg-indigo-600', on); sb.classList.toggle('text-white', on); sb.classList.toggle('text-slate-300', !on);
+    const mbtn = $('mtab-' + v[0]); if (mbtn) { mbtn.classList.toggle('text-indigo-600', on); mbtn.classList.toggle('text-slate-500', !on); }
+  });
+  const mm = $('mtab-more'); if (mm) { const on = !inBar.includes(id); mm.classList.toggle('text-indigo-600', on); mm.classList.toggle('text-slate-500', !on); }
+  if (id === 'audit') loadAudit();
+  window.scrollTo({top: 0});
+}
+function renderAll() {
+  renderPending(); renderCosts(); renderProjectCosts(); renderStock(); renderCatalog(); fillSelects(); refreshMove(); renderStockIn(); renderUnits(); fillNetSelects(); renderCustomers(); renderHotspots(); renderNetwork(); renderProjects(); renderTickets(); renderTasks(); renderReqs(); renderProc(); renderDocs(); renderLedger(); renderUsers();
+}
+
+/* ---------- dashboard ---------- */
+const PLAB = {approve:['Approve','amber'], issue:['Issue stock','indigo'], waiting:['Waiting','slate'], low:['Low stock','rose'], collect:['Collect','emerald'], assign:['Assign','amber'], close:['Close','emerald'], task:['My task','sky'], ticket:['My ticket','sky'], details:['Add details','amber'], finance:['Finance','amber'], order:['Order','indigo'], receive:['Receive','sky'], pay:['Payment','rose']};
+function renderPending() {
+  const p = D.pending || []; $('pending-count').textContent = p.length;
+  ['badge-dashboard', 'mbadge-dashboard'].forEach(i => { const e = $(i); if (e) { e.textContent = p.length; e.classList.toggle('hidden', !p.length); } });
+  $('pending-list').innerHTML = p.length ? p.map(a => { const [l, c] = PLAB[a.type] || [a.type, 'slate'];
+    return `<button onclick="switchTab('${a.tab}')" class="w-full text-left flex items-start gap-3 p-3 hover:bg-slate-50 border-b"><span class="px-2 py-0.5 rounded text-xs font-semibold bg-${c}-100 text-${c}-800 whitespace-nowrap">${l}</span><span class="text-sm"><b class="font-mono">${esc(a.ref)}</b> ${esc(a.text)}</span></button>`; }).join('')
+    : '<p class="p-5 text-sm text-slate-400">Nothing is waiting on you right now.</p>';
+}
+function renderCosts() {
+  $('cost-block').classList.toggle('hidden', !can.viewCosts); if (!can.viewCosts || !D.costs) return;
+  const c = D.costs, card = (l, v, col) => `<div class="card p-4"><p class="text-xs text-slate-500">${l}</p><p class="text-xl font-bold ${col}">${money(v)}</p></div>`;
+  $('cost-cards').innerHTML = card('Stock value', c.stockValue, 'text-indigo-700') + card('Stock-in spend', c.stockInSpend, 'text-slate-800') + card('Issued / consumed', c.stockOutCost, 'text-amber-700') + card('Replacement cost', c.replacementCost, 'text-rose-700');
+  $('cost-types').innerHTML = table(['Type', 'Qty', 'Cost'], (c.byCostType || []).map(x => [esc(x.type), x.qty, `<b>${money(x.cost)}</b>`]));
+  $('cost-tasks').innerHTML = table(['Task / ref', 'Qty', 'Cost', 'Replacement', 'Last use'], (c.tasks || []).slice(0, 100).map(x => [`<span class="font-mono text-xs">${esc(x.ref)}</span>`, x.qty, money(x.cost), money(x.replacementCost), esc(x.lastUse)]));
+}
+function renderStock() {
+  $('stock-block').classList.toggle('hidden', !can.viewStock); if (!can.viewStock) return;
+  const rows = D.summary.map(s => { const low = Number(s.reorder) > 0 && Number(s.net) <= Number(s.reorder) && Number(s.net) > 0, st = Number(s.net) <= 0 ? 'Out of Stock' : low ? 'Low Stock' : 'In Stock';
+    return [`<span class="font-mono text-xs">${esc(s.sku)}</span>`, esc(s.model), s.totalIn, s.totalOut, `<b>${s.net}</b>`, s.reorder, badge(st)]; });
+  $('stock-table').innerHTML = table(['SKU', 'Item', 'In', 'Out', 'Balance', 'Reorder at', 'Status'], rows);
+}
+
+/* ---------- catalog ---------- */
+/* ---------- dropdowns / movement ---------- */
+function fillSelects() {
+  const opt = (v, t, extra) => `<option value="${esc(v)}" ${extra || ''}>${esc(t)}</option>`;
+  const people = D.people || [], techs = people.filter(p => p.role === 'Technician');
+  $('tk-tech').innerHTML = opt('', 'Unassigned') + techs.map(p => opt(p.name, p.name)).join('');
+  $('task-assignee').innerHTML = opt('', 'Select...') + people.map(p => opt(p.name, `${p.name} (${p.role})`)).join('');
+  $('txn-user').innerHTML = people.map(p => opt(p.name, `${p.name} (${p.role})`, p.name === me.name ? 'selected' : '')).join('');
+  const skuOpts = D.catalog.map(c => opt(c.sku, `${c.sku} - ${c.model}`)).join('');
+  $('task-sku').innerHTML = opt('', 'No stock needed') + skuOpts;
+  fillProjectSelects(); filterReqItems();
+  $('tk-ids').innerHTML = D.tickets.map(t => `<option value="${esc(t.id)}">`).join('');
+  if (can.manageDevices) {
+    $('dev-id').innerHTML = opt('', 'Select unit...') + D.serialized.map(s => opt(s.id, `${s.id} - ${s.model} (S/N ${s.sn || 'n/a'})`)).join('');
+  }
+}
+function refreshMove() {
+  if (!can.moveStock) return;
+  const ser = $('txn-type').value === 'serialized', dir = $('txn-dir').value, sel = $('txn-item');
+  $('txn-label').textContent = ser ? 'Serialized unit' : 'Item SKU';
+  const o = (v, t, m) => `<option value="${esc(v)}" data-model="${esc(m)}">${esc(t)}</option>`;
+  if (ser) {
+    sel.innerHTML = o('', 'Select unit...', '') + D.serialized.filter(s => dir === 'Stock Out' ? s.status === 'In Stock' : s.status !== 'In Stock').map(s => o(s.id, `${s.id} - ${s.model} (S/N ${s.sn || 'n/a'})`, s.model)).join('');
+    $('txn-qty').value = 1; $('txn-qty').readOnly = true;
+  } else {
+    sel.innerHTML = o('', 'Select item...', '') + D.catalog.filter(c => !isSerSku(c.sku)).map(c => o(c.sku, `${c.sku} - ${c.model}${isSerSku(c.sku) ? ' [per-unit]' : ''}`, c.model)).join('');
+    $('txn-qty').readOnly = false;
+  }
+  $('txn-cost').value = dir === 'Stock In' ? 'Procurement / Stock In' : ($('txn-cost').value === 'Procurement / Stock In' ? 'Installation' : $('txn-cost').value);
+  $('txn-model').value = '';
+  const nb = $('mv-note'); nb.classList.toggle('hidden', dir !== 'Stock In');
+  nb.innerHTML = 'Receiving <b>new</b> ONTs, routers, APs or FAT boxes? Record their S/N, MAC and other details in <a href="#" class="underline font-semibold" onclick="switchTab(\'stockin\');return false">Stock In (Serialized)</a>. Use this form for bulk items, or to return an existing unit to stock.';
+}
+function loadDev() {
+  const s = D.serialized.find(x => x.id === $('dev-id').value); if (!s) return;
+  $('dev-status').value = s.status || 'In Stock'; $('dev-cond').value = s.condition || 'Not Recorded'; $('dev-loc').value = s.location; $('dev-cust').value = s.custodian; $('dev-sn').value = s.sn || ''; $('dev-mac').value = s.mac || ''; $('dev-pid').value = s.productId || '';
+}
+
+/* ---------- tickets ---------- */
+function renderTickets() {
+  $('ticket-form-card').classList.toggle('hidden', !can.createTicket);
+  $('ticket-list-card').classList.toggle('xl:col-span-3', !can.createTicket);
+  const f = $('tk-filter').value, active = ['Open', 'Assigned', 'In Progress', 'Resolved'];
+  const rows = D.tickets.filter(t => !f || (f === 'active' ? active.includes(t.status) : t.status === f)).reverse();
+  $('tk-table').innerHTML = table(['Ticket', 'Customer / issue', 'Technician', 'Status', 'Devices', 'Task', ''],
+    rows.map(t => [`<b class="font-mono text-xs">${esc(t.id)}</b><div class="text-[11px] text-slate-400">${esc(t.date)}</div>`,
+      `${esc(t.customer)}${entityLink(t)}<div class="text-xs text-slate-500">${esc(t.category)} · ${esc(t.priority || 'Normal')}</div><div class="text-xs text-slate-400">${esc(t.notes)}</div>`,
+      esc(t.tech), badge(t.status), `<span class="text-xs">${esc(t.oldSN)} → ${esc(t.newSN)}</span>`, esc(t.task || '—'),
+      t.status === 'Closed' ? '—' : btn('Update', `ticketModal('${esc(t.id)}')`, 'indigo')]), 'No tickets in this view.');
+}
+function ticketModal(id) {
+  const t = D.tickets.find(x => x.id === id), priv = can.viewAllTickets;
+  const statuses = priv ? ['Open', 'Assigned', 'In Progress', 'Resolved', 'Closed'] : ['In Progress', 'Resolved'];
+  openModal('Update ' + id,
+    `<div><label class="lbl">Status</label><select name="status" class="inp"><option value="">(no change - note only)</option>${statuses.map(s => `<option ${s === t.status ? 'selected' : ''}>${s}</option>`).join('')}</select></div>` +
+    (priv ? `<div><label class="lbl">Assign technician</label><select name="assignedTech" class="inp"><option value="">(no change)</option>${D.people.filter(p => p.role === 'Technician').map(p => `<option>${esc(p.name)}</option>`).join('')}</select></div>` + (t.task ? '' : '<label class="flex gap-2 text-sm"><input type="checkbox" name="createTask" value="1" checked> Create a linked task when assigning</label>') : '') +
+    `<div class="grid grid-cols-2 gap-3"><div><label class="lbl">Old S/N</label><input name="oldDeviceSN" class="inp"></div><div><label class="lbl">New S/N</label><input name="newDeviceSN" class="inp"></div></div>
+     <div><label class="lbl">Note (required to resolve)</label><textarea name="notes" rows="3" class="inp"></textarea></div>`,
+    'Save', d => runModal('updateTicket', [token, Object.assign({ticketId: id, createTask: !!d.createTask}, d)]));
+}
+
+/* ---------- tasks ---------- */
+function renderTasks() {
+  $('task-form-card').classList.toggle('hidden', !can.createTask);
+  $('task-list-card').classList.toggle('xl:col-span-3', !can.createTask);
+  $('task-title').textContent = can.viewAllTasks ? 'Task queue' : 'My tasks';
+  const f = $('task-filter').value, active = ['Assigned', 'Awaiting Stock', 'Ready', 'In Progress'];
+  const rows = D.tasks.filter(t => !f || (f === 'active' ? active.includes(t.status) : t.status === f)).reverse();
+  $('task-table').innerHTML = table(['Task', 'Assigned', 'Stock', 'Status', 'Site / ref', ''],
+    rows.map(t => {
+      const mine = sameMe(t.assignee), done = ['Completed', 'Cancelled'].includes(t.status);
+      let a = '';
+      if (!done && (mine || can.createTask)) {
+        if (['Assigned', 'Ready'].includes(t.status)) a += btn('Start', `taskAct('${esc(t.id)}','In Progress')`, 'slate');
+        if (t.status === 'In Progress') a += btn('Complete', `taskAct('${esc(t.id)}','Completed')`, 'emerald');
+        if (can.createTask) a += btn('Cancel', `taskAct('${esc(t.id)}','Cancelled')`, 'rose');
+      }
+      return [`<b class="font-mono text-xs">${esc(t.id)}</b><div>${esc(t.title)}</div><div class="text-[11px] text-slate-400">${esc(t.priority)} · by ${esc(t.createdBy)}</div>${t.notes ? `<div class="text-[11px] text-slate-400 max-w-xs">${esc(t.notes)}</div>` : ''}`,
+        esc(t.assignee), t.sku ? `<span class="font-mono text-xs">${esc(t.sku)} × ${esc(t.qty)}</span>` : '—', badge(t.status),
+        `${esc(t.site || '—')}${t.ref ? '<div class="text-xs text-slate-500">' + esc(t.ref) + '</div>' : ''}`, a || '—'];
+    }), 'No tasks in this view.');
+}
+function taskAct(id, status) {
+  if (status === 'In Progress') return api('updateTaskStatus', [token, id, status, ''], r => { toast(r.message, !r.success); if (r.success) loadData(); });
+  openModal(status + ' ' + id, `<div><label class="lbl">${status === 'Completed' ? 'What was done? (job notes, materials used)' : 'Reason'}</label><textarea name="note" rows="3" class="inp" ${status === 'Cancelled' ? 'required' : ''}></textarea></div>`, status === 'Completed' ? 'Mark complete' : 'Cancel task', d => runModal('updateTaskStatus', [token, id, status, d.note || '']));
+}
+
+/* ---------- requisitions ---------- */
+function decide(id, action) {
+  if (action === 'Approved') return api('decideRequisition', [token, id, action, ''], r => { toast(r.message, !r.success); if (r.success) loadData(); });
+  openModal('Reject ' + id, '<div><label class="lbl">Reason (the technician will see this)</label><textarea name="note" rows="3" required class="inp"></textarea></div>', 'Reject', d => runModal('decideRequisition', [token, id, 'Rejected', d.note]));
+}
+function cancelReq(id) { api('cancelRequisition', [token, id], r => { toast(r.message, !r.success); if (r.success) loadData(); }); }
+function issueModal(id) {
+  const r = D.reqs.find(x => x.id === id), qty = Number(r.qty);
+  if (!isSerSku(r.sku)) return openModal('Issue ' + id, `<p class="text-sm">Hand over <b>${qty} × ${esc(r.sku)}</b> to <b>${esc(r.tech)}</b>. This posts a Stock Out to the ledger.</p>`, 'Issue stock', () => runModal('issueRequisition', [token, id, []]));
+  const units = D.serialized.filter(s => s.status === 'In Stock' && (s.sku || '') === r.sku);
+  openModal('Issue ' + id, `<p class="text-sm">Tick exactly <b>${qty}</b> unit(s) of ${esc(r.sku)} for <b>${esc(r.tech)}</b>. <button type="button" onclick="scanFor(tickUnit)" class="text-emerald-700 font-semibold underline"><i class="fa-solid fa-barcode"></i> Scan</button></p><div class="max-h-60 overflow-y-auto border rounded-lg divide-y">${units.length ? units.map(u => `<label class="flex gap-2 p-2 text-sm"><input type="checkbox" name="asset" value="${esc(u.id)}"> <span class="font-mono text-xs">${esc(u.id)}</span> S/N ${esc(u.sn || 'n/a')}</label>`).join('') : '<p class="p-3 text-sm text-slate-400">No units in stock are linked to this SKU.</p>'}</div>`,
+    'Issue stock', d => runModal('issueRequisition', [token, id, [].concat(d.asset || [])]));
+}
+
+/* ---------- item tracking tags / project-aware selects ---------- */
+const TRACK_TAG = {Serialized: ['Serial', 'indigo'], 'Non-Serialized': ['Non-serial', 'sky'], Bulk: ['Bulk', 'amber']};
+const trackTag = t => { const [l, c] = TRACK_TAG[t] || TRACK_TAG.Bulk; return `<span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-${c}-100 text-${c}-800">${l}</span>`; };
+const myProject = pid => !!(D.projects || []).find(p => p.id === pid && p.own);
+const nc = s => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+
+function fillProjectSelects() {
+  const opt = (v, t) => `<option value="${esc(v)}">${esc(t)}</option>`;
+  const open = (D.projects || []).filter(p => ['Planning', 'Active'].includes(p.status));
+  const list = label => opt('', label) + open.map(p => opt(p.id, `${p.id} - ${p.name}`)).join('');
+  [['req-project', 'General stock (no project)'], ['txn-project', 'General stock (no project)'], ['task-project', 'No project'], ['proc-project', 'General stock (no project)']].forEach(([id, label]) => { const el = $(id); if (!el) return; const cur = el.value; el.innerHTML = list(label); el.value = cur; });
+  $('cat-scope').innerHTML = opt('Shared', 'Shared - any project can use it') + (D.projects || []).map(p => opt(p.id, `Only for ${p.id} - ${p.name}`)).join('');
+  $('proc-sku').innerHTML = opt('', 'Select item...') + D.catalog.map(c => opt(c.sku, `${c.sku} - ${c.model}`)).join('');
+  $('prj-manager').innerHTML = (D.people || []).filter(p => ['Project Manager', 'Admin'].includes(p.role)).map(p => opt(p.name, `${p.name} (${p.role})`)).join('');
+  if (me.role === 'Project Manager') $('prj-manager').value = me.name;
+}
+function filterReqItems() {
+  const pid = $('req-project').value, tr = $('req-track').value, cur = $('req-sku').value;
+  const items = (D.catalog || []).filter(c => (c.scope === 'Shared' || c.scope === pid) && (!tr || c.tracking === tr));
+  $('req-sku').innerHTML = '<option value="">Select item...</option>' + items.map(c => `<option value="${esc(c.sku)}">${esc(c.sku)} - ${esc(c.model)} [${c.tracking}${c.scope !== 'Shared' ? ' · project-only' : ''}]</option>`).join('');
+  $('req-sku').value = items.some(c => c.sku === cur) ? cur : '';
+}
+
+/* ---------- catalog ---------- */
+function renderCatalog() {
+  if (!can.manageCatalog) return;
+  const net = {}; (D.summary || []).forEach(s => net[s.sku] = s.net);
+  $('cat-cost').disabled = !can.viewCosts;
+  $('cat-table').innerHTML = table(['SKU', 'Item', 'Type', 'Scope', 'Stock', 'Reorder', ...(can.viewCosts ? ['Cost'] : []), ''],
+    D.catalog.map(c => [`<span class="font-mono text-xs">${esc(c.sku)}</span>`, `${esc(c.model)}<div class="text-xs text-slate-400">${esc(c.assetType)}${c.description ? ' · ' + esc(c.description) : ''}</div>`, trackTag(c.tracking),
+      c.scope === 'Shared' ? '<span class="text-xs text-slate-500">Shared</span>' : `<span class="text-xs font-semibold text-indigo-700">${esc(c.scope)}</span>`, net[c.sku] ?? '—', c.reorder, ...(can.viewCosts ? [money(c.unitCost)] : []), btn('Edit', `editItem('${esc(c.sku)}')`)]));
+}
+function catTypeChange() { const t = $('cat-type').value; if (['ONT', 'RTR', 'NET', 'FAT'].includes(t)) $('cat-asset').value = {ONT: 'XPON/ONT', RTR: 'Wireless Router', NET: 'Enterprise Router', FAT: 'FAT Box'}[t]; }
+function editItem(sku) {
+  const c = D.catalog.find(x => x.sku === sku); if (!c) return;
+  $('cat-title').textContent = 'Edit ' + sku; $('cat-mode').value = 'edit';
+  $('cat-sku').value = sku; $('cat-sku').readOnly = true;
+  const ser = c.tracking === 'Serialized';
+  $('cat-type').disabled = ser; if (!ser) $('cat-type').value = c.tracking === 'Non-Serialized' ? 'NONSER' : 'BULK';
+  $('cat-model').value = c.model; $('cat-asset').value = c.assetType; $('cat-mfr').value = c.manufacturer; $('cat-tech').value = c.accessTech;
+  $('cat-desc').value = c.description; $('cat-cost').value = c.unitCost; $('cat-reorder').value = c.reorder; $('cat-scope').value = c.scope; window.scrollTo({top: 0, behavior: 'smooth'});
+}
+function resetCat() { $('form-cat').reset(); $('cat-title').textContent = 'Add catalog item'; $('cat-mode').value = 'new'; $('cat-sku').readOnly = false; $('cat-type').disabled = false; }
+
+/* ---------- projects ---------- */
+function renderProjects() {
+  $('prj-form-card').classList.toggle('hidden', !can.manageProjects);
+  $('prj-list-card').classList.toggle('xl:col-span-3', !can.manageProjects);
+  $('prj-table').innerHTML = table(['Project', 'Manager', 'Status', 'Budget / spent', ''], (D.projects || []).slice().reverse().map(p => {
+    const bud = Number(p.budget || 0), sp = Number(p.spent || 0), pct = bud ? Math.min(100, Math.round(sp / bud * 100)) : 0;
+    const fin = p.spent === '' ? '<span class="text-xs text-slate-400">—</span>' : `<div class="text-xs">${money(sp)}${bud ? ' / ' + money(bud) : ''}</div>${bud ? `<div class="h-1.5 bg-slate-100 rounded mt-1"><div class="h-full rounded ${sp > bud ? 'bg-rose-500' : 'bg-indigo-500'}" style="width:${pct}%"></div></div>` : ''}`;
+    return [`<b class="font-mono text-xs">${esc(p.id)}</b><div>${esc(p.name)}</div><div class="text-xs text-slate-400">${esc(p.type)} · ${esc(p.location || 'no location')}</div>`, esc(p.manager), badge(p.status), fin,
+      btn('Materials', `projectModal('${esc(p.id)}')`, 'indigo') + (can.manageProjects && (me.role === 'Admin' || p.own) ? btn('Edit', `editProject('${esc(p.id)}')`) : '')];
+  }), 'No projects yet.');
+}
+function editProject(id) {
+  const p = D.projects.find(x => x.id === id); if (!p) return;
+  $('prj-title').textContent = 'Edit ' + id; $('prj-mode').value = 'edit'; $('prj-id').value = id;
+  $('prj-name').value = p.name; $('prj-type').value = p.type || 'Deployment'; $('prj-status').value = p.status; $('prj-loc').value = p.location;
+  if (p.manager) $('prj-manager').value = p.manager; $('prj-start').value = (p.start || '').slice(0, 10); $('prj-end').value = (p.end || '').slice(0, 10);
+  $('prj-budget').value = p.budget; $('prj-notes').value = p.notes; window.scrollTo({top: 0, behavior: 'smooth'});
+}
+function resetPrj() { $('form-prj').reset(); $('prj-title').textContent = 'New project'; $('prj-mode').value = 'new'; $('prj-id').value = ''; if (me && me.role === 'Project Manager') $('prj-manager').value = me.name; }
+function projectModal(id) {
+  const p = D.projects.find(x => x.id === id), showMoney = p.spent !== '';
+  openModal(`${p.id} - ${p.name}`, `<div class="text-sm space-y-1"><div>${badge(p.status)} ${esc(p.type)} · ${esc(p.location || 'no location')}</div><div class="text-xs text-slate-500">Manager: ${esc(p.manager)}${p.start ? ' · ' + esc(p.start.slice(0, 10)) + ' → ' + esc((p.end || 'open').slice(0, 10)) : ''}</div>${showMoney ? `<div>Budget ${money(p.budget)} · Spent <b>${money(p.spent)}</b></div>` : ''}${p.notes ? `<div class="text-xs text-slate-500">${esc(p.notes)}</div>` : ''}</div>
+    <div class="text-xs font-semibold text-slate-600 pt-2">Material issued to this project</div>${table(['SKU', 'Item', 'Qty', ...(showMoney ? ['Cost'] : [])], (p.items || []).map(i => [`<span class="font-mono text-xs">${esc(i.sku)}</span>`, esc(i.model), i.qty, ...(showMoney ? [money(i.cost)] : [])]), 'Nothing issued yet.')}
+    <div class="text-xs text-slate-500 pt-2">Requisitions: ${esc(p.linkedReqs || 'none')}</div>`, 'Close', closeModal);
+}
+function renderProjectCosts() {
+  const rows = (D.projects || []).filter(p => p.spent !== '');
+  $('proj-cost-block').classList.toggle('hidden', !rows.length);
+  $('proj-cost-table').innerHTML = table(['Project', 'Status', 'Budget', 'Spent', 'Left'], rows.map(p => { const b = Number(p.budget || 0), s = Number(p.spent || 0);
+    return [`<b class="font-mono text-xs">${esc(p.id)}</b> ${esc(p.name)}`, badge(p.status), b ? money(b) : '—', money(s), b ? `<span class="${s > b ? 'text-rose-600 font-semibold' : ''}">${money(b - s)}</span>` : '—']; }));
+}
+
+/* ---------- requisitions (project + multi-stage) ---------- */
+function renderReqs() {
+  $('req-form-card').classList.toggle('hidden', !can.requestMaterial);
+  const f = $('req-filter').value, act = ['Pending Approval', 'Pending Finance', 'Approved - Ready', 'Awaiting Stock'];
+  const C = Object.fromEntries(D.catalog.map(c => [c.sku, c]));
+  const rows = D.reqs.filter(r => !f || (f === 'active' ? act.includes(r.status) : r.status === f)).reverse();
+  $('req-table').innerHTML = table(['Req', 'Requester / project', 'Item', 'Qty', 'Reason', 'Status', ''], rows.map(r => {
+    const own = sameMe(r.tech), c = C[r.sku] || {}, adminOk = me.role === 'Admin';
+    let a = '';
+    if (r.status === 'Pending Approval' && (!own || adminOk) && (can.approveReq || myProject(r.projectId))) a += btn('Approve', `decide('${esc(r.id)}','Approved')`, 'emerald') + btn('Reject', `decide('${esc(r.id)}','Rejected')`, 'rose');
+    if (r.status === 'Pending Finance' && can.approveFinance && (!own || adminOk)) a += btn('Finance OK', `decide('${esc(r.id)}','Approved')`, 'emerald') + btn('Reject', `decide('${esc(r.id)}','Rejected')`, 'rose');
+    if (can.approveReq && r.status === 'Approved - Ready') a += btn('Issue', `issueModal('${esc(r.id)}')`, 'indigo');
+    if (can.requestProcurement && r.status === 'Awaiting Stock' && !r.procRef) a += btn('Raise purchase', `raiseProc('${esc(r.id)}')`, 'amber');
+    if (own && ['Pending Approval', 'Pending Finance'].includes(r.status)) a += btn('Withdraw', `cancelReq('${esc(r.id)}')`, 'slate');
+    if (can.generatePDF && r.status === 'Issued') a += btn('Delivery note', `genNote('${esc(r.id)}','Delivery note')`, 'indigo');
+    const who = [r.approvedBy && 'Ops: ' + esc(r.approvedBy), r.finStatus && r.finStatus !== 'N/A' && 'Finance: ' + esc(r.finStatus) + (r.finBy ? ' (' + esc(r.finBy) + ')' : ''), r.issuedBy && 'Issued: ' + esc(r.issuedBy), r.procRef && 'Purchase ' + esc(r.procRef)].filter(Boolean).join(' · ');
+    return [`<b class="font-mono text-xs">${esc(r.id)}</b><div class="text-[11px] text-slate-400">${esc(r.date)}</div>`,
+      `${esc(r.tech)}<div class="text-xs ${r.projectId ? 'text-indigo-700 font-semibold' : 'text-slate-400'}">${esc(r.projectId || 'General stock')}</div>`,
+      `<span class="font-mono text-xs">${esc(r.sku)}</span> ${trackTag(c.tracking)}<div class="text-xs text-slate-400">${esc(c.model || '')}</div>`, `<b>${esc(r.qty)}</b>${r.estValue ? `<div class="text-[11px] text-slate-400">${money(r.estValue)}</div>` : ''}`, esc(r.reason),
+      `${badge(r.status)}<div class="text-[11px] text-slate-400">${who} ${esc(r.note)}</div>`, a || '—'];
+  }), 'No requisitions in this view.');
+}
+function raiseProc(id) { api('raiseProcurementFromReq', [token, id], r => { toast(r.message, !r.success); if (r.success) loadData(); }); }
+
+/* ---------- procurement ---------- */
+function renderProc() {
+  $('proc-form-card').classList.toggle('hidden', !can.requestProcurement);
+  $('proc-list-card').classList.toggle('xl:col-span-3', !can.requestProcurement);
+  const f = $('proc-filter').value, act = ['Pending Finance', 'Approved', 'Ordered'];
+  const rows = (D.procs || []).filter(p => !f || (f === 'active' ? act.includes(p.status) : p.status === f)).reverse();
+  $('proc-table').innerHTML = table(['Purchase', 'Item', 'Project / req', 'Status', 'Supplier / PO', ''], rows.map(p => {
+    const own = sameMe(p.by); let a = '';
+    if (p.status === 'Pending Finance' && can.approveProcurement && (!own || me.role === 'Admin')) a += btn('Approve', `procDecide('${esc(p.id)}','Approved')`, 'emerald') + btn('Reject', `procDecide('${esc(p.id)}','Rejected')`, 'rose');
+    if (p.status === 'Pending Finance' && (own || me.role === 'Admin')) a += btn('Cancel', `procCancel('${esc(p.id)}')`, 'slate');
+    if (p.status === 'Approved' && can.receiveProcurement) a += btn('Mark ordered', `procOrder('${esc(p.id)}')`, 'indigo');
+    if (p.status === 'Ordered' && can.receiveProcurement) a += btn('Receive', `procReceive('${esc(p.id)}')`, 'emerald');
+    if (p.status === 'Received' && can.generatePDF) a += btn('Receipt note', `genNote('${esc(p.id)}','Receipt note')`, 'indigo');
+    return [`<b class="font-mono text-xs">${esc(p.id)}</b><div class="text-[11px] text-slate-400">${esc(p.date)} · ${esc(p.by)}</div>`, `<span class="font-mono text-xs">${esc(p.sku)}</span> × <b>${esc(p.qty)}</b>${p.estTotal ? `<div class="text-[11px] text-slate-400">${money(p.estTotal)}</div>` : ''}`,
+      `${esc(p.projectId || 'General')}${p.reqId ? `<div class="text-xs text-slate-500">for ${esc(p.reqId)}</div>` : ''}`, `${badge(p.status)}<div class="text-[11px] text-slate-400">${p.finBy ? 'Finance: ' + esc(p.finBy) : ''}</div>`,
+      `${esc(p.supplier || '—')}<div class="text-xs text-slate-500">${esc(p.po || '')}</div><div class="text-[11px] text-slate-400">${esc(p.notes)}</div>`, a || '—'];
+  }), 'No purchase requests in this view.');
+}
+function procDecide(id, action) {
+  if (action === 'Approved') return api('decideProcurement', [token, id, action, ''], r => { toast(r.message, !r.success); if (r.success) loadData(); });
+  openModal('Reject ' + id, '<div><label class="lbl">Reason</label><textarea name="note" rows="3" required class="inp"></textarea></div>', 'Reject', d => runModal('decideProcurement', [token, id, 'Rejected', d.note]));
+}
+function procCancel(id) { api('cancelProcurement', [token, id], r => { toast(r.message, !r.success); if (r.success) loadData(); }); }
+function procOrder(id) {
+  openModal('Order ' + id, '<div><label class="lbl">Supplier *</label><input name="supplier" required class="inp"></div><div><label class="lbl">PO / order reference</label><input name="po" class="inp"></div>', 'Mark ordered', d => runModal('orderProcurement', [token, id, d]));
+}
+function procReceive(id) {
+  const p = D.procs.find(x => x.id === id);
+  openModal('Receive ' + id, `<p class="text-sm">Confirm <b>${esc(p.qty)} × ${esc(p.sku)}</b> arrived. This posts a Stock In${isSerSku(p.sku) ? ' and creates the unit records (add S/N and MAC afterwards in Serialized Units)' : ''}, and releases any requisition or task waiting for this item.</p>`, 'Receive stock', () => runModal('receiveProcurement', [token, id]));
+}
+
+/* ---------- delivery / receipt notes ---------- */
+function genNote(ref, label) {
+  openModal('Generate ' + label.toLowerCase() + ' for ' + ref, '<label class="flex gap-2 text-sm"><input type="checkbox" name="email" checked> Email the PDF to the recipient (Finance is copied)</label><div><label class="lbl">Extra recipient email (optional)</label><input name="extra" type="email" class="inp"></div>', 'Generate PDF', d => {
+    $('modal-ok').disabled = true;
+    api('generateNote', [token, ref, {email: !!d.email, extra: d.extra || ''}], r => {
+      $('modal-ok').disabled = false;
+      if (!r.success) return toast(r.message, true);
+      closeModal(); loadData();
+      openModal('Note ready', `<p class="text-sm">${esc(r.message)}</p><a href="${esc(r.url)}" target="_blank" rel="noopener" class="btn inline-block">Open PDF</a>`, 'Done', closeModal);
+    });
+  });
+}
+function renderDocs() {
+  if (!can.viewDocs) return;
+  $('doc-table').innerHTML = table(['Doc', 'Reference', 'Project', 'Recipient', 'Created', ...(can.viewCosts ? ['Value'] : []), 'Payment', ''], (D.docs || []).slice().reverse().map(x => [
+    `<b class="font-mono text-xs">${esc(x.no)}</b><div class="text-xs text-slate-500">${esc(x.type)}</div>`, `<span class="font-mono text-xs">${esc(x.ref)}</span>`, esc(x.projectId || '—'), `${esc(x.recipient)}<div class="text-[11px] text-slate-400">${x.emailedTo ? 'Emailed: ' + esc(x.emailedTo) : 'Not emailed'}</div>`,
+    `${esc(x.at)}<div class="text-[11px] text-slate-400">${esc(x.by)}</div>`, ...(can.viewCosts ? [x.value ? money(x.value) : '—'] : []),
+    `${badge(x.payStatus || '—')}<div class="text-[11px] text-slate-400">${esc(x.paidDate)} ${esc(x.paidRef)}</div>`,
+    `<a href="${esc(x.url)}" target="_blank" rel="noopener" class="btn-sm bg-indigo-600 hover:bg-indigo-500 inline-block mr-1">Open</a>` + (can.managePayments ? btn('Payment', `payModal('${esc(x.no)}')`, 'slate') : '')]), 'No notes generated yet.');
+}
+function payModal(no) {
+  openModal('Payment status ' + no, '<div><label class="lbl">Status</label><select name="status" class="inp"><option>Pending</option><option>Paid</option><option>Tracking only</option></select></div><div><label class="lbl">Payment reference (cheque / M-Pesa / invoice)</label><input name="ref" class="inp"></div>', 'Save', d => runModal('setPaymentStatus', [token, no, d.status, d.ref || '']));
+}
+
+/* ---------- barcode / QR scanner ---------- */
+let qr = null, scanCb = null;
+function openScannerModal() { scanFor(null); }
+function scanFor(cb) {
+  scanCb = cb; $('scan-result').value = ''; $('scan-msg').textContent = ''; $('scan-modal').classList.remove('hidden');
+  if (typeof Html5Qrcode === 'undefined') { $('scan-msg').textContent = 'Camera scanner not loaded - take a photo, type, or use a USB scanner.'; return; }
+  qr = new Html5Qrcode('qr-reader');
+  qr.start({facingMode: 'environment'}, {fps: 10, qrbox: {width: 250, height: 150}}, txt => { $('scan-result').value = txt; submitScan(); }, () => {})
+    .catch(e => { $('scan-msg').textContent = 'Live camera is not available here (' + ((e && e.message) || e) + '). Use the photo button or type the code.'; qr = null; });
+}
+function stopCam() { if (qr) { const q = qr; qr = null; q.stop().then(() => q.clear()).catch(() => {}); } }
+function closeScan() { stopCam(); $('scan-modal').classList.add('hidden'); }
+function submitScan() { const code = $('scan-result').value.trim(); if (!code) return; const cb = scanCb || defaultScan; closeScan(); cb(code); }
+function scanFile(input) {
+  const file = input.files[0]; if (!file) return; $('scan-msg').textContent = 'Reading photo...';
+  new Html5Qrcode('qr-reader-file').scanFile(file, false).then(t => { $('scan-result').value = t; submitScan(); }).catch(() => { $('scan-msg').textContent = 'No code found - move closer, keep it flat and well lit, or type it.'; });
+  input.value = '';
+}
+function findUnit(code) { const k = nc(code); return (D.serialized || []).find(s => [s.id, s.sn, s.mac, s.productId].some(v => nc(v) === k)); }
+function defaultScan(code) {
+  api('lookupCode', [token, code], r => {
+    if (!r.success) return toast(r.message, true);
+    let body, acts = '';
+    if (r.kind === 'unit') {
+      body = `<div class="text-sm space-y-1"><div><b class="font-mono">${esc(r.id)}</b> ${r.status ? badge(r.status) : ''}</div><div>${esc(r.model)} · <span class="font-mono text-xs">${esc(r.sku)}</span></div><div class="text-xs text-slate-500">S/N ${esc(r.sn || 'n/a')} · MAC ${esc(r.mac || 'n/a')} · ${esc(r.condition || '')}</div><div class="text-xs text-slate-500">Location: ${esc(r.location || '—')} · Custodian: ${esc(r.custodian || '—')}</div>${r.customer ? `<div class="text-xs">Customer: ${esc(r.customer)} ${esc(r.account)} ${esc(r.ticket)}</div>` : ''}</div>`;
+      if (can.moveStock) acts += `<button type="button" class="btn" onclick="closeModal();useScanned('${esc(r.id)}','unit')">Record movement</button> `;
+      if (can.manageDevices) acts += `<button type="button" class="btn !bg-emerald-600" onclick="closeModal();useScanned('${esc(r.id)}','edit')">Update unit</button>`;
+    } else {
+      body = `<div class="text-sm space-y-1"><div><b class="font-mono">${esc(r.sku)}</b> ${trackTag(r.tracking)}</div><div>${esc(r.model)}</div><div class="text-xs text-slate-500">Scope: ${esc(r.scope)}${r.net != null ? ' · In stock: <b>' + r.net + '</b>' : ''}</div></div>`;
+      if (can.moveStock) acts += `<button type="button" class="btn" onclick="closeModal();useScanned('${esc(r.sku)}','sku')">Record movement</button>`;
+    }
+    openModal('Scan result', body + `<div class="flex gap-2 pt-2">${acts}</div>`, 'Close', closeModal);
+  });
+}
+function useScanned(id, mode) {
+  if (mode === 'edit') { switchTab('units'); $('dev-id').value = id; loadDev(); return; }
+  switchTab('movement'); $('txn-type').value = mode === 'unit' ? 'serialized' : 'bulk'; refreshMove(); $('txn-item').value = id; $('txn-item').dispatchEvent(new Event('change'));
+}
+function pickMoveItem(code) {
+  const u = findUnit(code); if (u) return useScanned(u.id, 'unit');
+  const k = nc(code), c = D.catalog.find(x => nc(x.sku) === k || nc(x.model) === k);
+  if (c) return useScanned(c.sku, 'sku');
+  toast('No unit or item matches "' + code + '".', true);
+}
+function tickUnit(code) {
+  const u = findUnit(code); const box = u && document.querySelector(`#modal-body input[name=asset][value="${u.id}"]`);
+  if (box) { box.checked = true; toast('Ticked ' + u.id); } else toast('That code is not one of the listed in-stock units.', true);
+}
+
+/* ---------- serialized stock in (batch S/N + MAC) ---------- */
+function addSiRow(sn, mac, pid, cond) {
+  const tr = document.createElement('tr'); tr.className = 'border-b';
+  tr.innerHTML = `<td class="p-2 text-xs text-slate-400"></td><td class="p-2"><input class="inp font-mono si-sn" placeholder="Serial number" onkeydown="siKey(event,this,'sn')" value="${esc(sn || '')}"></td><td class="p-2"><input class="inp font-mono si-mac" placeholder="MAC address" onkeydown="siKey(event,this,'mac')" value="${esc(mac || '')}"></td><td class="p-2"><input class="inp font-mono si-pid" placeholder="optional" value="${esc(pid || '')}"></td><td class="p-2"><select class="inp si-cond">${['New', 'Good', 'Faulty', 'Not Recorded'].map(c => `<option ${c === (cond || 'New') ? 'selected' : ''}>${c}</option>`).join('')}</select></td><td class="p-2"><input class="inp si-rem" placeholder="optional"></td><td class="p-2"><button type="button" onclick="this.closest('tr').remove();siRenumber()" class="text-rose-600"><i class="fa-solid fa-trash"></i></button></td>`;
+  $('si-rows').appendChild(tr); siRenumber(); return tr;
+}
+function siRenumber() { [...$('si-rows').children].forEach((tr, i) => tr.firstElementChild.textContent = i + 1); $('si-count').textContent = $('si-rows').children.length + ' unit(s)'; }
+function siKey(e, el, kind) {
+  if (e.key !== 'Enter') return; e.preventDefault(); const tr = el.closest('tr');
+  if (kind === 'sn') tr.querySelector('.si-mac').focus(); else (tr.nextElementSibling || addSiRow()).querySelector('.si-sn').focus();
+}
+function siBlank(tr) { return !tr.querySelector('.si-sn').value.trim() && !tr.querySelector('.si-mac').value.trim(); }
+const isMacLike = c => /^[0-9A-Fa-f]{12}$/.test(String(c).replace(/[:.\-\s]/g, ''));
+function siPaste() {
+  openModal('Paste units', '<p class="text-xs text-slate-500">One unit per line: serial number, MAC, then Product ID (separated by tab, comma or space). MAC and Product ID are optional.</p><textarea name="list" rows="9" class="inp font-mono" placeholder="48575443D0782C9  E03768890782"></textarea>', 'Add to list', d => {
+    closeModal();
+    [...$('si-rows').children].filter(siBlank).forEach(tr => tr.remove());
+    String(d.list || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean).forEach(l => {
+      let [a, b, c] = l.split(/[\t,;\s]+/);
+      if (b && isMacLike(a) && !isMacLike(b)) [a, b] = [b, a];
+      addSiRow(a, b, c);
+    });
+    if (!$('si-rows').children.length) addSiRow();
+  });
+}
+function siScanSeq() { toast('Scan each S/N and MAC in turn - close the scanner when finished.'); scanFor(siScanned); }
+function siScanned(code) {
+  const rows = [...$('si-rows').children]; let t;
+  if (isMacLike(code)) { t = rows.find(r => !r.querySelector('.si-mac').value.trim() && r.querySelector('.si-sn').value.trim()) || rows.find(r => !r.querySelector('.si-mac').value.trim()) || addSiRow(); t.querySelector('.si-mac').value = code; }
+  else { t = rows.find(r => !r.querySelector('.si-sn').value.trim()) || addSiRow(); t.querySelector('.si-sn').value = code; }
+  siRenumber(); setTimeout(() => scanFor(siScanned), 450);
+}
+function renderStockIn() {
+  if (!can.moveStock) return;
+  const cur = $('si-sku').value;
+  $('si-sku').innerHTML = '<option value="">Choose model...</option>' + D.catalog.filter(c => c.tracking === 'Serialized').map(c => `<option value="${esc(c.sku)}">${esc(c.sku)} - ${esc(c.model)}</option>`).join('');
+  $('si-sku').value = cur;
+  if (!$('si-rows').children.length) addSiRow();
+}
+function submitStockIn(e) {
+  e.preventDefault();
+  const sku = $('si-sku').value, units = [...$('si-rows').children].map(r => ({sn: r.querySelector('.si-sn').value.trim(), mac: r.querySelector('.si-mac').value.trim(), productId: r.querySelector('.si-pid').value.trim(), condition: r.querySelector('.si-cond').value, remarks: r.querySelector('.si-rem').value.trim()})).filter(u => u.sn || u.mac);
+  if (!sku) return toast('Choose a model.', true);
+  if (!units.length) return toast('Add at least one unit.', true);
+  const seen = new Set();
+  for (const u of units) for (const k of [nc(u.sn), nc(u.mac)]) if (k) { if (seen.has(k)) return toast('Duplicate in your list: ' + k, true); seen.add(k); }
+  const b = $('si-btn'); b.disabled = true;
+  api('recordSerializedStockIn', [token, {sku, site: $('si-site').value, notes: $('si-notes').value, units}], r => {
+    b.disabled = false; toast(r.message, !r.success);
+    if (r.success) { $('si-rows').innerHTML = ''; addSiRow(); $('si-notes').value = ''; loadData(); }
+  });
+}
+
+/* ---------- serialized units grid + life cycle ---------- */
+function renderUnits() {
+  if (!(can.manageDevices || can.moveStock)) return;
+  const f = $('unit-filter').value;
+  const rows = (D.serialized || []).filter(s => !f || (f === 'In Stock' ? s.status === 'In Stock' : f === 'missing' ? (!s.sn || !s.mac) : s.status !== 'In Stock'));
+  $('unit-table').innerHTML = table(['Unit', 'S/N · MAC', 'Status', 'Location / custodian', ''], rows.map(s => [
+    `<b class="font-mono text-xs">${esc(s.id)}</b><div class="text-xs text-slate-500">${esc(s.model)}</div>`,
+    `${s.sn ? `<span class="font-mono text-xs">${esc(s.sn)}</span>` : '<span class="text-xs text-amber-600 font-semibold">no S/N</span>'}<div class="font-mono text-[11px] ${s.mac ? 'text-slate-400' : 'text-amber-600 font-semibold'}">${esc(s.mac || 'no MAC')}</div>`,
+    badge(s.status === 'In Stock' ? 'In Stock' : (s.status || '—')) , `${esc(s.location || '—')}<div class="text-xs text-slate-400">${esc(s.custodian || '')}</div>`,
+    (can.viewAudit ? btn('History', `viewLifeCycle('${esc(s.id)}')`, 'indigo') : '') + btn('Edit', `useScanned('${esc(s.id)}','edit')`)]), 'No units match.');
+}
+function diffText(p, n) {
+  let a = {}, b = {}; try { a = p ? JSON.parse(p) : {}; } catch (e) {} try { b = n ? JSON.parse(n) : {}; } catch (e) {}
+  return Object.keys(b).map(k => a[k] !== undefined && String(a[k]) !== String(b[k]) ? `${k}: ${a[k] || '—'} → ${b[k] || '—'}` : `${k}: ${b[k] || '—'}`).join(' · ');
+}
+function viewLifeCycle(id) {
+  openModal('Life cycle - ' + id, '<p class="text-sm text-slate-400">Loading...</p>', 'Close', closeModal);
+  api('getAuditLogs', [token, 'Serialized Asset', id, 0], r => {
+    if (!r.success) { $('modal-body').innerHTML = `<p class="text-sm text-rose-600">${esc(r.message)}</p>`; return; }
+    const ev = r.logs.map(l => `<div class="border-l-2 border-indigo-500 pl-3 py-1"><p class="text-[11px] text-slate-400">${esc(l.timestamp)} · ${esc(l.user)} (${esc(l.role)})</p><p class="text-sm font-semibold">${esc(l.action)}</p><p class="text-xs text-slate-600">${esc(diffText(l.prev, l.next))}</p>${l.details ? `<p class="text-xs text-slate-400">${esc(l.details)}</p>` : ''}</div>`).join('');
+    const old = !r.logs.length && r.legacy ? `<p class="text-xs font-semibold text-slate-500">Earlier history (from the unit's notes)</p>` + r.legacy.split(' | ').map(x => `<div class="border-l-2 border-slate-300 pl-3 text-xs text-slate-600">${esc(x)}</div>`).join('') : '';
+    $('modal-body').innerHTML = `<div class="space-y-2 max-h-[60vh] overflow-y-auto">${ev || old || '<p class="text-sm text-slate-500">No events recorded yet for this unit.</p>'}</div>`;
+  });
+}
+
+/* ---------- audit trail page ---------- */
+let auditCache = [];
+function loadAudit() {
+  if (!can.viewAuditAll) return;
+  api('getAuditLogs', [token, $('aud-type').value, '', 500], r => { if (!r.success) return toast(r.message, true); auditCache = r.logs.slice().reverse(); renderAudit(); });
+}
+function renderAudit() {
+  $('aud-table').innerHTML = table(['ID', 'When', 'Record', 'Action', 'By', 'Change / details'], auditCache.map(a => [
+    `<span class="font-mono text-xs">${esc(a.id)}</span>`, esc(a.timestamp), `<div class="text-xs text-slate-500">${esc(a.entityType)}</div><b class="font-mono text-xs">${esc(a.entityId)}</b>`, `<span class="px-2 py-0.5 rounded text-xs font-semibold bg-slate-100">${esc(a.action)}</span>`,
+    `${esc(a.user)}<div class="text-[11px] text-slate-400">${esc(a.role)}</div>`, `<div class="text-xs">${esc(diffText(a.prev, a.next))}</div><div class="text-[11px] text-slate-400">${esc(a.details)}</div>`]), 'No audit records yet.');
+}
+function verifyAudit() {
+  api('verifyAuditTrail', [token], r => {
+    if (!r.success) return toast(r.message, true);
+    toast(r.intact ? `Audit trail intact - ${r.count} chained records verified.` : `TAMPERING DETECTED at ${r.brokenAt} (sheet row ${r.row}). Records from that point cannot be trusted.`, !r.intact);
+  });
+}
+
+/* ---------- customers / hotspots / network map ---------- */
+Object.assign(BADGE, {Suspended: 'amber', Disconnected: 'rose', 'Pending Install': 'sky', Planned: 'sky', Decommissioned: 'slate'});
+const splitIds = v => String(v || '').split(/[,;\s]+/).map(x => x.trim().toUpperCase()).filter(Boolean);
+const CUS = () => D.customers || [], HSP = () => D.hotspots || [], SPL = () => D.splitters || [], ENC = () => D.enclosures || [];
+const UNITS = () => Object.fromEntries((D.serialized || []).map(s => [s.id, s]));
+const unitTxt = id => { const s = UNITS()[id]; return s ? `${id} · ${s.model || ''}${s.sn ? ' · S/N ' + s.sn : ''}` : (id || '—'); };
+const isOnt = s => /SKU-ONT/i.test(s.sku || '') || /ont|onu|xpon/i.test(s.assetType || '');
+const deployed = s => ['Issued / Out', 'Dispatched'].includes(s.status);
+const ratioPorts = r => parseInt(String(r || '').split(':')[1], 10) || 0;
+const ACTIVE_TK = ['Open', 'Assigned', 'In Progress', 'Resolved'];
+const ticketsOf = (kind, id) => (D.tickets || []).filter(t => kind === 'customer' ? t.customerId === id : t.hotspotId === id);
+const openTk = (kind, id) => ticketsOf(kind, id).filter(t => ACTIVE_TK.includes(t.status)).length;
+const daysAgo = d => { const t = new Date(String(d).replace(' ', 'T')); return isNaN(t) ? 9999 : (Date.now() - t.getTime()) / 864e5; };
+
+function usedUnits(exceptId) {
+  const used = new Set();
+  CUS().forEach(c => { if (c.id !== exceptId && c.onu) used.add(c.onu); });
+  HSP().forEach(h => { if (h.id !== exceptId) { if (h.onu) used.add(h.onu); splitIds(h.aps).forEach(a => used.add(a)); } });
+  return used;
+}
+function unitOpts(kind, exceptId, current) {
+  const used = usedUnits(exceptId);
+  return (D.serialized || []).filter(s => (deployed(s) || s.id === current) && !used.has(s.id) && (kind === 'any' || (kind === 'onu' ? isOnt(s) : !isOnt(s))))
+    .map(s => `<option value="${esc(s.id)}">${esc(unitTxt(s.id))}</option>`).join('');
+}
+function splitterUse() { const u = {}, b = id => { if (id) u[id] = (u[id] || 0) + 1; }; CUS().forEach(c => b(c.splitterId)); HSP().forEach(h => b(h.splitterId)); SPL().forEach(s => b(s.parent)); return u; }
+function splitterOpts() {
+  const use = splitterUse();
+  return '<option value="">(not connected)</option>' + SPL().filter(s => s.status !== 'Decommissioned').map(s => {
+    const e = ENC().find(x => x.id === s.enclosureId);
+    return `<option value="${esc(s.id)}">${esc(s.id)} · ${esc(s.name)} · ${esc(s.ratio)}${e ? ' @ ' + esc(e.name) : ''} (${use[s.id] || 0}/${ratioPorts(s.ratio)} used)</option>`;
+  }).join('');
+}
+function pathOf(spId, port) {
+  if (!spId) return '—';
+  const chain = []; let cur = SPL().find(s => s.id === spId), g = 0;
+  while (cur && g++ < 8) { chain.unshift(cur); cur = SPL().find(s => s.id === cur.parent); }
+  if (!chain.length) return esc(spId);
+  const enc = s => { const e = ENC().find(x => x.id === s.enclosureId); return e ? ' @ ' + e.name : ''; };
+  return (chain[0].olt ? 'OLT ' + chain[0].olt + ' → ' : '') + chain.map(s => `${s.id} (${s.ratio}${enc(s)})`).join(' → ') + (port ? ' → port ' + port : '');
+}
+function fillNetSelects() {
+  if (!can.viewNetwork) return;
+  const o = (v, t) => `<option value="${esc(v)}">${esc(t)}</option>`;
+  const keep = (id, html) => { const el = $(id); if (!el) return; const cur = el.value; el.innerHTML = html; el.value = cur; };
+  keep('cus-hotspot', o('', 'Select hotspot...') + HSP().map(h => o(h.id, `${h.id} · ${h.name}`)).join(''));
+  keep('cus-onu', '<option value="">(none)</option>' + unitOpts('onu', '', ''));
+  keep('cus-spl', splitterOpts());
+  keep('hs-onu', '<option value="">(none)</option>' + unitOpts('onu', '', ''));
+  keep('hs-ap-pick', '<option value="">Add an AP...</option>' + unitOpts('ap', '', ''));
+  keep('hs-spl', splitterOpts());
+  keep('spl-parent', '<option value="">(none - straight from OLT)</option>' + SPL().map(s => o(s.id, `${s.id} · ${s.name} (${s.ratio})`)).join(''));
+  keep('spl-enc', '<option value="">(none)</option>' + ENC().map(e => o(e.id, `${e.id} · ${e.name}`)).join(''));
+  keep('tk-cust', o('', '(not registered)') + CUS().map(c => o(c.id, `${c.name} · ${c.account || c.id}`)).join(''));
+  keep('tk-hsp', o('', '(none)') + HSP().map(h => o(h.id, `${h.name} · ${h.id}`)).join(''));
+  if ($('tk-dev') && !$('tk-dev').innerHTML) tkEntity('');
+}
+
+/* GenieACS */
+function genieLink(rec) {
+  const base = ((D.genie && D.genie.url) || '').replace(/\/$/, ''); if (!base) return '';
+  if (rec.genieId) return `${base}/#!/devices/${encodeURIComponent(rec.genieId)}`;
+  const u = UNITS()[rec.onu]; if (u && u.sn) return `${base}/#!/devices?filter=${encodeURIComponent('DeviceID.SerialNumber = "' + u.sn + '"')}`;
+  return `${base}/#!/devices`;
+}
+function genieButtons(kind, rec) {
+  const link = genieLink(rec), nbi = D.genie && D.genie.nbi; let h = '';
+  if (link) h += `<a href="${esc(link)}" target="_blank" rel="noopener" class="btn-sm bg-emerald-600 hover:bg-emerald-500 inline-block mr-1"><i class="fa-solid fa-satellite-dish mr-1"></i>Open in GenieACS</a>`;
+  if (nbi) h += btn('Check online', `genieCheck('${kind}','${esc(rec.id)}')`, 'sky');
+  if (!link && !nbi) h = '<span class="text-[11px] text-slate-400">GenieACS not linked yet (Admin: set GENIEACS_URL in Inventory Settings).</span>';
+  return `<div class="flex flex-wrap items-center gap-1">${h}<span id="genie-out" class="text-xs font-semibold"></span></div>`;
+}
+function genieCheck(kind, id) {
+  const el = $('genie-out'); el.className = 'text-xs font-semibold text-slate-500'; el.textContent = 'checking...';
+  api('genieacsStatus', [token, kind, id], r => { el.className = 'text-xs font-semibold ' + (r.success && r.found && r.online ? 'text-emerald-600' : 'text-rose-600'); el.textContent = r.message; });
+}
+
+/* device card + replacement */
+function deviceCard(id, role, kind, entId) {
+  if (!id) return `<div class="text-xs text-amber-600">No ${role} linked</div>`;
+  const s = UNITS()[id], n = (D.tickets || []).filter(t => t.deviceId === id).length;
+  return `<div class="border rounded-lg p-2 text-xs flex justify-between items-start gap-2"><div><b>${role}</b> <span class="font-mono">${esc(id)}</span> ${s ? badge(s.status) : ''}<div class="text-slate-500">${esc(s ? s.model : '')} · S/N ${esc((s && s.sn) || '—')} · MAC ${esc((s && s.mac) || '—')}</div>${n >= 2 ? `<div class="text-rose-600 font-semibold">${n} tickets on this device - consider replacing it</div>` : (n ? `<div class="text-slate-400">${n} ticket(s) on this device</div>` : '')}</div>${can.replaceDevice ? `<button type="button" onclick="closeModal();replaceModal('${kind}','${esc(entId)}','${role}','${esc(id)}')" class="btn-sm bg-amber-600">Replace</button>` : ''}</div>`;
+}
+function replaceModal(kind, entId, role, oldAsset) {
+  const tks = ticketsOf(kind, entId).filter(t => ACTIVE_TK.includes(t.status)), fam = s => role === 'ONU' ? isOnt(s) : !isOnt(s);
+  const cands = (D.serialized || []).filter(s => s.id !== oldAsset && !s.customer && fam(s) && ((s.status === 'In Stock' && can.moveStock) || (deployed(s) && (can.moveStock || String(s.custodian || '').toLowerCase() === me.name.toLowerCase()))));
+  openModal(`Replace ${role} ${oldAsset}`, `<p class="text-xs text-slate-500">The old unit becomes <b>Under Repair / Faulty</b> and the new one is installed here. Store roles can pick units still In Stock (issued automatically); technicians pick a unit already issued to them.</p>
+    <div><label class="lbl">Replacement unit *</label><select name="newAsset" required class="inp"><option value="">Select...</option>${cands.map(s => `<option value="${esc(s.id)}">${esc(unitTxt(s.id))} [${esc(s.status)}]</option>`).join('')}</select></div>
+    <div><label class="lbl">Ticket</label><select name="ticketId" class="inp"><option value="">(none)</option>${tks.map(t => `<option value="${esc(t.id)}">${esc(t.id)} - ${esc(t.category)}</option>`).join('')}</select></div>
+    <div><label class="lbl">Fault found / reason *</label><textarea name="reason" rows="2" required class="inp"></textarea></div>`,
+    'Replace device', d => runModal('replaceDevice', [token, {kind, entityId: entId, role, oldAsset, newAsset: d.newAsset, ticketId: d.ticketId || '', reason: d.reason}]));
+}
+
+/* ---- customers ---- */
+function cusSubChange() { const hs = $('cus-subscription').value === 'Hotspot User'; $('cus-hsp-block').classList.toggle('hidden', !hs); $('cus-pppoe-block').classList.toggle('hidden', hs); }
+function renderCustomers() {
+  if (!can.viewNetwork) return;
+  $('cus-form-card').classList.toggle('hidden', !can.manageCustomers); $('cus-list-card').classList.toggle('xl:col-span-3', !can.manageCustomers);
+  const sf = $('cus-fsub').value, st = $('cus-fstatus').value;
+  $('cus-table').innerHTML = table(['Customer', 'Contact', 'Where', 'Connection', 'Tickets', ''], CUS().filter(c => (!sf || c.subscription === sf) && (!st || c.status === st)).map(c => {
+    const n = ticketsOf('customer', c.id).length, open = openTk('customer', c.id), h = HSP().find(x => x.id === c.hotspotId);
+    const conn = c.subscription === 'PPPoE' ? `${c.onu ? `<span class="font-mono text-xs">${esc(c.onu)}</span>` : '<span class="text-amber-600 text-xs">no ONU linked</span>'}<div class="text-[11px] text-slate-400">${pathOf(c.splitterId, c.port)}</div>` : `Hotspot: ${esc(h ? h.name : c.hotspotId)}`;
+    return [`<b>${esc(c.name)}</b><div class="text-[11px] text-slate-400"><span class="font-mono">${esc(c.id)}</span> · ${esc(c.account)}</div><div>${badge(c.status)} <span class="text-[11px] text-slate-500">${esc(c.subscription)}${c.package ? ' · ' + esc(c.package) : ''}</span></div>`,
+      `${esc(c.contact || '—')}<div class="text-[11px]">${c.phone ? `<a class="text-indigo-600" href="tel:${esc(c.phone)}">${esc(c.phone)}</a>` : ''}</div>`,
+      `${c.plot ? 'Plot ' + esc(c.plot) : ''}<div class="text-[11px] text-slate-500">${esc(c.location)}</div>`, conn,
+      `${n}${open ? ` <span class="px-1.5 rounded bg-rose-100 text-rose-700 text-[11px] font-semibold">${open} open</span>` : ''}`,
+      btn('View', `customerModal('${esc(c.id)}')`, 'indigo') + (can.manageCustomers ? btn('Edit', `editCustomer('${esc(c.id)}')`) : '')];
+  }), 'No customers yet.');
+}
+function editCustomer(id) {
+  const c = CUS().find(x => x.id === id); if (!c) return;
+  switchTab('customers'); $('cus-title').textContent = 'Edit ' + id; $('cus-mode').value = 'edit'; $('cus-id').value = id;
+  $('cus-name').value = c.name; $('cus-subscription').value = c.subscription || 'PPPoE'; cusSubChange(); $('cus-account').value = c.account; $('cus-status').value = c.status || 'Active';
+  $('cus-contact').value = c.contact; $('cus-phone').value = c.phone; $('cus-email').value = c.email; $('cus-plot').value = c.plot; $('cus-location').value = c.location;
+  $('cus-hotspot').value = c.hotspotId; $('cus-pppoe').value = c.pppoeUser; $('cus-package').value = c.package;
+  $('cus-onu').innerHTML = '<option value="">(none)</option>' + unitOpts('onu', c.id, c.onu); $('cus-onu').value = c.onu;
+  $('cus-spl').value = c.splitterId; $('cus-port').value = c.port; $('cus-genie').value = c.genieId; $('cus-install').value = String(c.installDate || '').slice(0, 10); $('cus-notes').value = c.notes;
+  window.scrollTo({top: 0, behavior: 'smooth'});
+}
+function resetCus() { $('form-cus').reset(); $('cus-title').textContent = 'Add customer'; $('cus-mode').value = 'new'; $('cus-id').value = ''; cusSubChange(); fillNetSelects(); }
+function raiseTicketFor(kind, id) {
+  closeModal(); switchTab('tickets');
+  if (kind === 'C') { $('tk-cust').value = id; tkEntity('C'); } else { $('tk-hsp').value = id; tkEntity('H'); }
+  const f = $('ticket-form-card'); if (f) f.scrollIntoView({behavior: 'smooth'});
+}
+function tkEntity(kind) {
+  let devs = [], name = '';
+  if (kind === 'C' && $('tk-cust').value) {
+    const c = CUS().find(x => x.id === $('tk-cust').value);
+    if (c) { name = `${c.name} / ${c.account || c.id}`; $('tk-hsp').value = c.hotspotId || ''; devs = [c.onu]; const h = HSP().find(x => x.id === c.hotspotId); if (h) devs = devs.concat([h.onu], splitIds(h.aps)); }
+  } else if (kind === 'H' && $('tk-hsp').value) {
+    const h = HSP().find(x => x.id === $('tk-hsp').value); if (h) { name = 'Hotspot: ' + h.name; $('tk-cust').value = ''; devs = [h.onu].concat(splitIds(h.aps)); }
+  }
+  if (name) $('tk-name').value = name;
+  $('tk-dev').innerHTML = '<option value="">(none / not sure)</option>' + devs.filter(Boolean).map(id => `<option value="${esc(id)}">${esc(unitTxt(id))}</option>`).join('');
+}
+function entityLink(t) {
+  let h = '';
+  if (t.customerId) h += `<a href="#" onclick="customerModal('${esc(t.customerId)}');return false" class="text-indigo-700 font-mono text-[11px] mr-1">${esc(t.customerId)}</a>`;
+  if (t.hotspotId) h += `<a href="#" onclick="hotspotModal('${esc(t.hotspotId)}');return false" class="text-indigo-700 font-mono text-[11px] mr-1">${esc(t.hotspotId)}</a>`;
+  if (t.deviceId) h += `<span class="font-mono text-[11px] text-slate-500">${esc(t.deviceId)}</span>`;
+  return h ? `<div>${h}</div>` : '';
+}
+function ticketList(kind, id) {
+  const tks = ticketsOf(kind, id).slice().reverse().slice(0, 8);
+  return tks.length ? tks.map(t => `<div class="flex justify-between gap-2 text-xs border-b py-1"><span><b class="font-mono">${esc(t.id)}</b> ${esc(t.category)}<span class="text-slate-400"> · ${esc(String(t.date).slice(0, 10))}</span></span>${badge(t.status)}</div>`).join('') : '<p class="text-xs text-slate-400">No tickets yet.</p>';
+}
+function customerModal(id) {
+  const c = CUS().find(x => x.id === id); if (!c) return;
+  const n90 = ticketsOf('customer', id).filter(t => daysAgo(t.date) <= 90).length, h = HSP().find(x => x.id === c.hotspotId);
+  openModal(`${c.name}`, `<div class="text-sm space-y-3">
+    <div>${badge(c.status)} <span class="text-xs text-slate-500">${esc(c.subscription)}${c.package ? ' · ' + esc(c.package) : ''} · <span class="font-mono">${esc(c.id)}</span> · acct ${esc(c.account)}</span></div>
+    <div class="text-xs">${c.contact ? 'Contact: <b>' + esc(c.contact) + '</b> ' : ''}${c.phone ? `<a class="text-indigo-600" href="tel:${esc(c.phone)}">${esc(c.phone)}</a> ` : ''}${esc(c.email)}<br>${c.plot ? 'Plot ' + esc(c.plot) + ' · ' : ''}${esc(c.location)}${c.pppoeUser ? '<br>PPPoE user: <span class="font-mono">' + esc(c.pppoeUser) + '</span>' : ''}${h ? `<br>Hotspot: <a href="#" onclick="hotspotModal('${esc(h.id)}');return false" class="text-indigo-700">${esc(h.name)}</a>` : ''}</div>
+    ${c.subscription === 'PPPoE' ? `${deviceCard(c.onu, 'ONU', 'customer', c.id)}<div class="text-xs text-slate-600"><i class="fa-solid fa-diagram-project mr-1"></i>${pathOf(c.splitterId, c.port)}</div>` : ''}
+    ${genieButtons('customer', c)}
+    <div><div class="text-xs font-semibold text-slate-600">Tickets (${n90} in the last 90 days)</div>${ticketList('customer', c.id)}</div>
+    ${c.notes ? `<div class="text-xs text-slate-500">${esc(c.notes)}</div>` : ''}
+    <div class="flex flex-wrap gap-2 pt-1">${can.createTicket ? `<button type="button" class="btn-sm bg-indigo-600" onclick="raiseTicketFor('C','${esc(c.id)}')">Raise ticket</button>` : ''}${can.manageCustomers ? `<button type="button" class="btn-sm" onclick="closeModal();editCustomer('${esc(c.id)}')">Edit</button>` : ''}${can.manageNetwork && c.subscription === 'PPPoE' ? `<button type="button" class="btn-sm" onclick="installModal('customer','${esc(c.id)}')">Install details</button>` : ''}</div></div>`, 'Close', closeModal);
+}
+/* quick install-details editor for technicians */
+function installModal(kind, id) {
+  const r = (kind === 'hotspot' ? HSP() : CUS()).find(x => x.id === id), hs = kind === 'hotspot';
+  openModal('Install details - ' + id, `<div><label class="lbl">ONU</label><select name="onu" class="inp"><option value="">(none)</option>${unitOpts('onu', id, r.onu)}</select></div>
+    ${hs ? `<div><label class="lbl">APs (comma-separated unit IDs)</label><input name="aps" class="inp font-mono" value="${esc(r.aps)}"></div>` : ''}
+    <div class="grid grid-cols-3 gap-3"><div class="col-span-2"><label class="lbl">Splitter</label><select name="splitterId" class="inp">${splitterOpts()}</select></div><div><label class="lbl">Port</label><input name="port" type="number" min="1" class="inp" value="${esc(r.port)}"></div></div>
+    <div><label class="lbl">GenieACS device ID</label><input name="genieId" class="inp font-mono" value="${esc(r.genieId)}"></div>`, 'Save',
+    d => runModal('updateInstall', [token, {kind, id, onu: d.onu, aps: d.aps || '', splitterId: d.splitterId, port: d.port, genieId: d.genieId}]));
+  const sel = document.querySelector('#modal-body select[name=onu]'); if (sel) sel.value = r.onu || '';
+  const sp = document.querySelector('#modal-body select[name=splitterId]'); if (sp) sp.value = r.splitterId || '';
+}
+
+/* ---- hotspots ---- */
+function hsAddAp(sel) { const v = sel.value; if (!v) return; const inp = $('hs-aps'), cur = splitIds(inp.value); if (!cur.includes(v)) cur.push(v); inp.value = cur.join(', '); sel.value = ''; }
+function renderHotspots() {
+  if (!can.viewNetwork) return;
+  $('hs-form-card').classList.toggle('hidden', !can.manageCustomers); $('hs-list-card').classList.toggle('xl:col-span-3', !can.manageCustomers);
+  $('hs-table').innerHTML = table(['Hotspot', 'Contact', 'Where', 'Devices', 'Users', 'Tickets', ''], HSP().map(h => {
+    const users = CUS().filter(c => c.hotspotId === h.id).length, open = openTk('hotspot', h.id), aps = splitIds(h.aps);
+    return [`<b>${esc(h.name)}</b><div class="text-[11px] text-slate-400 font-mono">${esc(h.id)}</div>${badge(h.status)}`, `${esc(h.contact || '—')}<div class="text-[11px]">${h.phone ? `<a class="text-indigo-600" href="tel:${esc(h.phone)}">${esc(h.phone)}</a>` : ''}</div>`,
+      `${h.plot ? 'Plot ' + esc(h.plot) : ''}<div class="text-[11px] text-slate-500">${esc(h.location)}</div>`, `ONU ${h.onu ? `<span class="font-mono text-xs">${esc(h.onu)}</span>` : '—'}<div class="text-[11px] text-slate-500">${aps.length} AP</div>`,
+      users, open ? `<span class="px-1.5 rounded bg-rose-100 text-rose-700 text-[11px] font-semibold">${open} open</span>` : ticketsOf('hotspot', h.id).length,
+      btn('View', `hotspotModal('${esc(h.id)}')`, 'indigo') + (can.manageCustomers ? btn('Edit', `editHotspot('${esc(h.id)}')`) : '')];
+  }), 'No hotspots yet.');
+}
+function editHotspot(id) {
+  const h = HSP().find(x => x.id === id); if (!h) return;
+  switchTab('hotspots'); $('hs-title').textContent = 'Edit ' + id; $('hs-mode').value = 'edit'; $('hs-id').value = id;
+  $('hs-name').value = h.name; $('hs-plot').value = h.plot; $('hs-status').value = h.status || 'Active'; $('hs-location').value = h.location; $('hs-contact').value = h.contact; $('hs-phone').value = h.phone;
+  $('hs-onu').innerHTML = '<option value="">(none)</option>' + unitOpts('onu', h.id, h.onu); $('hs-onu').value = h.onu;
+  $('hs-ap-pick').innerHTML = '<option value="">Add an AP...</option>' + unitOpts('ap', h.id, ''); $('hs-aps').value = h.aps;
+  $('hs-spl').value = h.splitterId; $('hs-port').value = h.port; $('hs-ssid').value = h.ssid; $('hs-install').value = String(h.installDate || '').slice(0, 10); $('hs-genie').value = h.genieId; $('hs-notes').value = h.notes;
+  window.scrollTo({top: 0, behavior: 'smooth'});
+}
+function resetHs() { $('form-hs').reset(); $('hs-title').textContent = 'Add hotspot'; $('hs-mode').value = 'new'; $('hs-id').value = ''; fillNetSelects(); }
+function addHotspotUser(hid) { closeModal(); switchTab('customers'); resetCus(); $('cus-subscription').value = 'Hotspot User'; cusSubChange(); $('cus-hotspot').value = hid; $('cus-name').focus(); }
+function hotspotModal(id) {
+  const h = HSP().find(x => x.id === id); if (!h) return;
+  const users = CUS().filter(c => c.hotspotId === id), aps = splitIds(h.aps);
+  openModal(h.name, `<div class="text-sm space-y-3">
+    <div>${badge(h.status)} <span class="text-xs text-slate-500 font-mono">${esc(h.id)}</span>${h.ssid ? ' · SSID ' + esc(h.ssid) : ''}</div>
+    <div class="text-xs">${h.contact ? 'Contact: <b>' + esc(h.contact) + '</b> ' : ''}${h.phone ? `<a class="text-indigo-600" href="tel:${esc(h.phone)}">${esc(h.phone)}</a>` : ''}<br>${h.plot ? 'Plot ' + esc(h.plot) + ' · ' : ''}${esc(h.location)}</div>
+    ${deviceCard(h.onu, 'ONU', 'hotspot', h.id)}${aps.map(a => deviceCard(a, 'AP', 'hotspot', h.id)).join('')}
+    <div class="text-xs text-slate-600"><i class="fa-solid fa-diagram-project mr-1"></i>${pathOf(h.splitterId, h.port)}</div>
+    ${genieButtons('hotspot', h)}
+    <div><div class="flex justify-between items-center"><div class="text-xs font-semibold text-slate-600">Users (${users.length})</div>${can.manageCustomers ? `<button type="button" class="btn-sm bg-indigo-600" onclick="addHotspotUser('${esc(h.id)}')">+ Add user</button>` : ''}</div>
+      ${users.length ? users.map(c => `<div class="flex justify-between gap-2 text-xs border-b py-1"><a href="#" onclick="customerModal('${esc(c.id)}');return false" class="text-indigo-700">${esc(c.name)}</a><span class="text-slate-500">${esc(c.phone || '')} ${badge(c.status)}</span></div>`).join('') : '<p class="text-xs text-slate-400">No users registered.</p>'}</div>
+    <div><div class="text-xs font-semibold text-slate-600">Tickets (hotspot and its users)</div>${ticketList('hotspot', h.id)}</div>
+    <div class="flex flex-wrap gap-2 pt-1">${can.createTicket ? `<button type="button" class="btn-sm bg-indigo-600" onclick="raiseTicketFor('H','${esc(h.id)}')">Raise ticket</button>` : ''}${can.manageCustomers ? `<button type="button" class="btn-sm" onclick="closeModal();editHotspot('${esc(h.id)}')">Edit</button>` : ''}${can.manageNetwork ? `<button type="button" class="btn-sm" onclick="installModal('hotspot','${esc(h.id)}')">Install details</button>` : ''}</div></div>`, 'Close', closeModal);
+}
+
+/* ---- network map ---- */
+function renderNetwork() {
+  if (!can.viewNetwork) return;
+  $('net-forms').classList.toggle('hidden', !can.manageNetwork); $('net-main').classList.toggle('xl:col-span-3', !can.manageNetwork);
+  renderInsights(); renderTree();
+  $('enc-table').innerHTML = table(['Enclosure', 'Where', 'GPS', 'Splitters', ''], ENC().map(e => [`<b class="font-mono text-xs">${esc(e.id)}</b> ${esc(e.name)}<div class="text-[11px] text-slate-400">${esc(e.type)}${e.capacity ? ' · ' + esc(e.capacity) + ' ports' : ''}</div>`, `${esc(e.location)}<div class="text-[11px] text-slate-500">${esc(e.plot)}</div>`,
+    e.coords ? `<a class="text-indigo-600 text-xs" target="_blank" rel="noopener" href="https://www.google.com/maps?q=${encodeURIComponent(e.coords)}">${esc(e.coords)}</a>` : '—', SPL().filter(s => s.enclosureId === e.id).map(s => esc(s.id)).join(', ') || '—', can.manageNetwork ? btn('Edit', `editEnc('${esc(e.id)}')`) : '']), 'No enclosures yet.');
+  const use = splitterUse();
+  $('spl-table').innerHTML = table(['Splitter', 'Feed', 'Enclosure', 'Ports', ''], SPL().map(s => { const e = ENC().find(x => x.id === s.enclosureId), cap = ratioPorts(s.ratio);
+    return [`<b class="font-mono text-xs">${esc(s.id)}</b> ${esc(s.name)}<div class="text-[11px] text-slate-400">${esc(s.ratio)} · ${badge(s.status)}</div>`, s.parent ? `${esc(s.parent)} port ${esc(s.parentPort)}` : `OLT ${esc(s.olt || '—')}`, e ? esc(e.name) : '—', `<span class="${(use[s.id] || 0) >= cap ? 'text-rose-600 font-semibold' : ''}">${use[s.id] || 0}/${cap}</span>`, can.manageNetwork ? btn('Edit', `editSpl('${esc(s.id)}')`) : ''];
+  }), 'No splitters yet.');
+}
+function occupants(spId) {
+  const o = [];
+  CUS().forEach(c => { if (c.splitterId === spId) o.push({port: Number(c.port) || 0, kind: 'customer', rec: c}); });
+  HSP().forEach(h => { if (h.splitterId === spId) o.push({port: Number(h.port) || 0, kind: 'hotspot', rec: h}); });
+  SPL().forEach(s => { if (s.parent === spId) o.push({port: Number(s.parentPort) || 0, kind: 'splitter', rec: s}); });
+  return o.sort((a, b) => a.port - b.port);
+}
+function nodeHtml(sp, depth, seen) {
+  if (seen.includes(sp.id)) return '';
+  const cap = ratioPorts(sp.ratio), occ = occupants(sp.id), enc = ENC().find(e => e.id === sp.enclosureId), free = Math.max(cap - occ.length, 0);
+  const items = occ.map(o => {
+    const p = `<span class="text-slate-400 font-mono text-[11px] inline-block w-8">${o.port ? 'P' + o.port : ''}</span>`;
+    if (o.kind === 'splitter') return `<div class="ml-2">${p}${nodeHtml(o.rec, depth + 1, seen.concat(sp.id))}</div>`;
+    if (o.kind === 'customer') { const c = o.rec, n = openTk('customer', c.id); return `<div class="ml-2 py-0.5 text-xs">${p}<i class="fa-solid fa-house-signal text-slate-400 mr-1"></i><a href="#" onclick="customerModal('${esc(c.id)}');return false" class="text-indigo-700 font-medium">${esc(c.name)}</a> <span class="text-slate-400">${esc(c.onu || 'no ONU')}</span>${n ? ` <span class="px-1.5 rounded bg-rose-100 text-rose-700 text-[10px] font-semibold">${n} open</span>` : ''}</div>`; }
+    const h = o.rec, n = openTk('hotspot', h.id); return `<div class="ml-2 py-0.5 text-xs">${p}<i class="fa-solid fa-wifi text-slate-400 mr-1"></i><a href="#" onclick="hotspotModal('${esc(h.id)}');return false" class="text-indigo-700 font-medium">${esc(h.name)}</a> <span class="text-slate-400">${splitIds(h.aps).length} AP · ${CUS().filter(c => c.hotspotId === h.id).length} users</span>${n ? ` <span class="px-1.5 rounded bg-rose-100 text-rose-700 text-[10px] font-semibold">${n} open</span>` : ''}</div>`;
+  }).join('');
+  return `<details ${depth < 2 ? 'open' : ''} class="border-l-2 border-indigo-300 pl-2 my-1"><summary class="cursor-pointer text-sm"><b class="font-mono">${esc(sp.id)}</b> ${esc(sp.name)} · ${esc(sp.ratio)}${enc ? ` · <i class="fa-solid fa-box-archive text-slate-400"></i> ${esc(enc.name)}` : ''} <span class="text-[11px] ${free === 0 ? 'text-rose-600' : 'text-slate-400'}">${occ.length}/${cap} used</span> ${badge(sp.status)}</summary>${items || '<div class="ml-2 text-xs text-slate-400">nothing connected yet</div>'}</details>`;
+}
+function renderTree() {
+  const roots = SPL().filter(s => !s.parent || !SPL().some(p => p.id === s.parent)), groups = {};
+  roots.forEach(r => (groups[r.olt || 'OLT / PON not set'] = groups[r.olt || 'OLT / PON not set'] || []).push(r));
+  $('net-tree').innerHTML = roots.length ? Object.keys(groups).map(k => `<div class="mb-3"><div class="text-xs font-semibold text-slate-600 mb-1"><i class="fa-solid fa-server mr-1"></i>${esc(k)}</div>${groups[k].map(r => nodeHtml(r, 0, [])).join('')}</div>`).join('')
+    : '<p class="text-sm text-slate-400">Nothing mapped yet. Add enclosures and splitters, then connect customers and hotspots to a splitter port.</p>';
+}
+function renderInsights() {
+  const card = $('net-insights-card'); card.classList.toggle('hidden', !can.viewAllTickets); if (!can.viewAllTickets) return;
+  const tks = D.tickets || [], C = Object.fromEntries(CUS().map(c => [c.id, c])), H = Object.fromEntries(HSP().map(h => [h.id, h])), S = Object.fromEntries(SPL().map(s => [s.id, s])), U = UNITS();
+  const splOf = t => { const c = C[t.customerId]; if (c && c.splitterId) return c.splitterId; const h = H[t.hotspotId]; return h ? h.splitterId : ''; };
+  const clus = {};
+  tks.filter(t => daysAgo(t.date) <= 30).forEach(t => { let id = splOf(t), g = 0; const who = t.customerId || t.hotspotId || t.customer; while (id && S[id] && g++ < 8) { const c = clus[id] || (clus[id] = {n: 0, who: new Set()}); c.n++; c.who.add(who); id = S[id].parent; } });
+  const cl = Object.entries(clus).filter(([, v]) => v.who.size >= 3).sort((a, b) => b[1].n - a[1].n).slice(0, 5);
+  const dev = {}; tks.filter(t => t.deviceId && daysAgo(t.date) <= 180).forEach(t => (dev[t.deviceId] = dev[t.deviceId] || []).push(t));
+  const rc = Object.entries(dev).filter(([, v]) => v.length >= 2).sort((a, b) => b[1].length - a[1].length).slice(0, 6);
+  const byModel = {}; Object.values(U).filter(deployed).forEach(s => (byModel[s.model] = byModel[s.model] || {units: 0, tk: 0}).units++);
+  tks.filter(t => t.deviceId && U[t.deviceId]).forEach(t => (byModel[U[t.deviceId].model] = byModel[U[t.deviceId].model] || {units: 0, tk: 0}).tk++);
+  const mr = Object.entries(byModel).filter(([, v]) => v.tk > 0).map(([m, v]) => [m, v.tk, v.units]).sort((a, b) => b[1] / (b[2] || 1) - a[1] / (a[2] || 1)).slice(0, 5);
+  const sec = (title, tone, rows, empty) => `<div><div class="text-xs font-semibold ${tone} mb-1">${title}</div>${rows.length ? rows.map(r => `<div class="text-xs py-0.5 border-b">${r}</div>`).join('') : `<div class="text-xs text-slate-400">${empty}</div>`}</div>`;
+  $('net-insights').innerHTML =
+    sec('Likely upstream faults (3+ customers/hotspots with tickets in 30 days on one splitter)', 'text-rose-600', cl.map(([id, v]) => { const e = ENC().find(x => x.id === (S[id] || {}).enclosureId); return `<b class="font-mono">${esc(id)}</b> ${esc((S[id] || {}).name)}${e ? ' @ ' + esc(e.name) : ''}: ${v.n} tickets from ${v.who.size} customers/hotspots - inspect the splitter, enclosure and feeder before replacing customer equipment`; }), 'No splitter shows a cluster of faults right now.') +
+    sec('Devices that keep failing (2+ tickets in 180 days) - replacement candidates', 'text-amber-600', rc.map(([id, v]) => `<b class="font-mono">${esc(id)}</b> ${esc((U[id] || {}).model || '')} at ${esc((U[id] || {}).customer || '—')}: ${v.length} tickets`), 'No repeat-failure devices yet. Link tickets to a device to build this list.') +
+    sec('Fault rate by model (tickets per deployed unit)', 'text-slate-600', mr.map(([m, t, u]) => `${esc(m)}: ${t} ticket(s) across ${u} deployed unit(s) = ${(t / (u || 1)).toFixed(2)}`), 'Not enough device-linked tickets yet.');
+}
+function editEnc(id) {
+  const e = ENC().find(x => x.id === id); if (!e) return;
+  $('enc-title').textContent = 'Edit ' + id; $('enc-mode').value = 'edit'; $('enc-id').value = id; $('enc-name').value = e.name; $('enc-type').value = e.type || 'FAT Box'; $('enc-location').value = e.location; $('enc-plot').value = e.plot; $('enc-coords').value = e.coords; $('enc-capacity').value = e.capacity; $('enc-notes').value = e.notes;
+  $('form-enc').scrollIntoView({behavior: 'smooth'});
+}
+function resetEnc() { $('form-enc').reset(); $('enc-title').textContent = 'Add enclosure'; $('enc-mode').value = 'new'; $('enc-id').value = ''; }
+function editSpl(id) {
+  const s = SPL().find(x => x.id === id); if (!s) return;
+  $('spl-title').textContent = 'Edit ' + id; $('spl-mode').value = 'edit'; $('spl-id').value = id; $('spl-name').value = s.name; $('spl-ratio').value = s.ratio; $('spl-parent').value = s.parent; $('spl-pport').value = s.parentPort; $('spl-olt').value = s.olt; $('spl-enc').value = s.enclosureId; $('spl-status').value = s.status || 'Active'; $('spl-notes').value = s.notes;
+  $('form-spl').scrollIntoView({behavior: 'smooth'});
+}
+function resetSpl() { $('form-spl').reset(); $('spl-title').textContent = 'Add splitter'; $('spl-mode').value = 'new'; $('spl-id').value = ''; fillNetSelects(); }
+
+/* ---------- ledger / users ---------- */
+function renderLedger() {
+  if (!can.viewLedger) return;
+  $('ledger-table').innerHTML = table(['Date', 'Dir', 'Item', 'Qty', 'Person', 'Site / ref', 'Unit', 'Total', 'Type', 'Task / asset'],
+    D.ledger.slice().reverse().map(l => [esc(l.date), badge(l.dir === 'Stock In' ? 'Issued' : 'Rejected').replace(/Issued|Rejected/, esc(l.dir)), `<span class="font-mono text-xs">${esc(l.sku)}</span><div class="text-xs text-slate-400">${esc(l.model)}</div>`, esc(l.qty), esc(l.user), esc(l.site), money(l.unitCost), `<b>${money(l.totalCost)}</b>`, esc(l.costType), `<span class="font-mono text-xs">${esc(l.taskId)}${l.assetId ? '<br>' + esc(l.assetId) : ''}</span>`]));
+}
+function renderUsers() {
+  if (!can.manageUsers) return;
+  $('usr-table').innerHTML = table(['Name', 'Email', 'Role', 'Status', 'Site', ''], D.users.map(u => [esc(u.name), esc(u.email), esc(u.role), badge(u.status === 'Inactive' ? 'Cancelled' : 'In Stock').replace(/Cancelled|In Stock/, esc(u.status)), esc(u.site), btn('Edit', `editUser('${esc(u.email)}')`)]));
+}
+function editUser(email) {
+  const u = D.users.find(x => x.email === email); if (!u) return;
+  $('usr-title').textContent = 'Edit user'; $('usr-email').value = u.email; $('usr-email').readOnly = true; $('usr-name').value = u.name; $('usr-role').value = u.role; $('usr-status').value = u.status; $('usr-site').value = u.site; $('usr-contact').value = u.contact;
+}
+function resetUsr() { $('form-usr').reset(); $('usr-title').textContent = 'Add user'; $('usr-email').readOnly = false; }
+</script>
+</body>
+</html>

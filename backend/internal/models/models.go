@@ -7,17 +7,21 @@ import (
 )
 
 type User struct {
-	ID                 uuid.UUID `gorm:"type:string;primaryKey" json:"id"`
-	Email              string    `gorm:"uniqueIndex;not null" json:"email"`
-	PasswordHash       string    `json:"-"`
-	MustChangePassword bool      `gorm:"default:false" json:"must_change_password"`
-	Name               string    `json:"name"`
-	Role               string    `json:"role"` // Admin, Store Manager, Finance, Project Manager, Support, Technician
-	Status             string    `gorm:"default:'active'" json:"status"`
-	SiteStation        string    `json:"site_station"`
-	ContactInfo        string    `json:"contact_info"`
-	CreatedAt          time.Time `json:"created_at"`
-	UpdatedAt          time.Time `json:"updated_at"`
+	ID                uuid.UUID  `gorm:"type:string;primaryKey" json:"id"`
+	Email             string     `gorm:"uniqueIndex;not null" json:"email"`
+	PasswordHash      string     `json:"-"` // bcrypt only; empty = no password set yet (must use email OTP / invite)
+	MustResetPassword bool       `gorm:"default:false" json:"must_reset_password"`
+	FailedLogins      int        `json:"-"`
+	LockedUntil       *time.Time `json:"-"`
+	LastLoginAt       *time.Time `json:"last_login_at"`
+	LegacyID          string     `json:"legacy_id,omitempty"`
+	Name              string     `json:"name"`
+	Role              string     `json:"role"` // Admin, Store Manager, Finance, Project Manager, Support, Technician
+	Status            string     `gorm:"default:'active'" json:"status"`
+	SiteStation       string     `json:"site_station"`
+	ContactInfo       string     `json:"contact_info"`
+	CreatedAt         time.Time  `json:"created_at"`
+	UpdatedAt         time.Time  `json:"updated_at"`
 }
 
 type MagicToken struct {
@@ -53,33 +57,18 @@ type SerializedInventory struct {
 	AccessTech       string    `json:"access_tech"`
 	ProductID        string    `json:"product_id"`
 	MAC              string    `json:"mac"`
-	SerialNumber     string    `gorm:"index" json:"serial_number"`
-	Status           string    `json:"status"` // In Stock, Issued / Out, Under Repair, Decommissioned
-	Condition        string    `json:"condition"` // New, Used, Faulty
+	SerialNumber     *string   `gorm:"uniqueIndex" json:"serial_number"` // NULL allowed: unreadable/unknown S/N; unique when present
+	Status           string    `json:"status"`                           // In Stock, Issued / Out, Under Repair, Decommissioned
+	Condition        string    `json:"condition"`                        // New, Used, Faulty
 	Location         string    `json:"location"`
 	Custodian        string    `json:"custodian"`
 	Notes            string    `json:"notes"`
 	CustomerID       string    `json:"customer_id"`
+	CustomerAccount  string    `json:"customer_account"`
+	LinkedTicketID   string    `json:"linked_ticket_id"`
 	CurrentProjectID string    `json:"current_project_id"`
 	CreatedAt        time.Time `json:"created_at"`
 	UpdatedAt        time.Time `json:"updated_at"`
-}
-
-type InventorySetting struct {
-	Key       string    `gorm:"primaryKey" json:"key"`
-	Value     string    `json:"value"`
-	UpdatedAt time.Time `json:"updated_at"`
-}
-
-type NotificationLog struct {
-	ID        uuid.UUID `gorm:"type:string;primaryKey" json:"id"`
-	Timestamp time.Time `json:"timestamp"`
-	Type      string    `json:"type"`
-	Reference string    `json:"reference"`
-	Recipient string    `json:"recipient"`
-	Subject   string    `json:"subject"`
-	Status    string    `json:"status"`
-	Error     string    `json:"error"`
 }
 
 type BulkInventory struct {
@@ -171,17 +160,17 @@ type HotspotUser struct {
 }
 
 type Voucher struct {
-	ID               uuid.UUID  `gorm:"type:string;primaryKey" json:"id"`
-	Code             string     `gorm:"uniqueIndex;not null" json:"code"`
-	DurationHours    int        `json:"duration_hours"`
-	MaxDevices       int        `json:"max_devices"`
-	Price            float64    `json:"price"`
-	Status           string     `json:"status"` // Unused, Active, Expired
-	HotspotID        *uuid.UUID `json:"hotspot_id"`
-	UsedByUsername   string     `json:"used_by_username"`
-	ActivatedAt      *time.Time `json:"activated_at"`
-	ExpiresAt        *time.Time `json:"expires_at"`
-	CreatedAt        time.Time  `json:"created_at"`
+	ID             uuid.UUID  `gorm:"type:string;primaryKey" json:"id"`
+	Code           string     `gorm:"uniqueIndex;not null" json:"code"`
+	DurationHours  int        `json:"duration_hours"`
+	MaxDevices     int        `json:"max_devices"`
+	Price          float64    `json:"price"`
+	Status         string     `json:"status"` // Unused, Active, Expired
+	HotspotID      *uuid.UUID `json:"hotspot_id"`
+	UsedByUsername string     `json:"used_by_username"`
+	ActivatedAt    *time.Time `json:"activated_at"`
+	ExpiresAt      *time.Time `json:"expires_at"`
+	CreatedAt      time.Time  `json:"created_at"`
 }
 
 type OLT struct {
@@ -292,6 +281,8 @@ type TechnicianTask struct {
 	Notes             string     `json:"notes"`
 	CreatedBy         string     `json:"created_by"`
 	StockReadyAt      *time.Time `json:"stock_ready_at"`
+	LinkedTicketID    string     `json:"linked_ticket_id"`
+	ProjectID         string     `json:"project_id"`
 	CreatedAt         time.Time  `json:"created_at"`
 	UpdatedAt         time.Time  `json:"updated_at"`
 }
@@ -308,6 +299,9 @@ type CustomerTicket struct {
 	LoggedBy               string     `json:"logged_by"`
 	ResolutionNotes        string     `json:"resolution_notes"`
 	LinkedTaskID           string     `json:"linked_task_id"`
+	CustomerID             string     `json:"customer_id"`
+	HotspotID              string     `json:"hotspot_id"`
+	DeviceAssetID          string     `json:"device_asset_id"`
 	Priority               string     `json:"priority"`
 	ClosedAt               *time.Time `json:"closed_at"`
 	CreatedAt              time.Time  `json:"created_at"`
@@ -355,6 +349,7 @@ type DeliveryNote struct {
 
 type AuditLedger struct {
 	ID             uuid.UUID `gorm:"type:string;primaryKey" json:"id"`
+	Seq            int64     `gorm:"uniqueIndex" json:"seq"`
 	EventTimestamp time.Time `json:"event_timestamp"`
 	ActorEmail     string    `json:"actor_email"`
 	ActorRole      string    `json:"actor_role"`
@@ -381,3 +376,85 @@ type GenieACSAuditLog struct {
 	ResultStatus    string    `json:"result_status"`
 	GenieACSTaskID  string    `json:"genieacs_task_id"`
 }
+
+// ---- authentication ----
+
+// Session is one login. Access and refresh tokens carry its ID (sid); revoking the
+// session (logout, password reset, deactivation) invalidates both immediately.
+type Session struct {
+	ID         string     `gorm:"primaryKey" json:"id"`
+	UserID     string     `gorm:"index" json:"user_id"`
+	RefreshJTI string     `json:"-"` // only the latest refresh token is valid (rotation + reuse detection)
+	UserAgent  string     `json:"user_agent"`
+	IPAddress  string     `json:"ip_address"`
+	ExpiresAt  time.Time  `json:"expires_at"`
+	RevokedAt  *time.Time `json:"revoked_at"`
+	CreatedAt  time.Time  `json:"created_at"`
+}
+
+// OTPCode is a single-use emailed code. Only an HMAC of the code is stored.
+type OTPCode struct {
+	ID          string `gorm:"primaryKey"`
+	Email       string `gorm:"index"`
+	Purpose     string // login | reset
+	CodeHash    string
+	ExpiresAt   time.Time
+	Attempts    int
+	ConsumedAt  *time.Time
+	ResetJTI    string // jti of the reset token issued after a successful reset-purpose verify
+	ResetUsedAt *time.Time
+	CreatedAt   time.Time
+}
+
+// ---- migration / operations ----
+
+type Setting struct {
+	Key       string    `gorm:"primaryKey" json:"key"`
+	Value     string    `json:"value"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type NotificationLog struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	Timestamp time.Time `gorm:"index" json:"timestamp"`
+	Type      string    `json:"type"`
+	Reference string    `json:"reference"`
+	Recipient string    `json:"recipient"`
+	Subject   string    `json:"subject"`
+	Status    string    `json:"status"` // SENT | FAILED
+	Error     string    `json:"error"`
+	Legacy    bool      `json:"legacy"`
+}
+
+// LegacyAuditEntry holds rows from the Apps Script audit trail as read-only history.
+type LegacyAuditEntry struct {
+	AuditID       string `gorm:"primaryKey" json:"audit_id"`
+	Timestamp     string `json:"timestamp"`
+	EntityType    string `json:"entity_type"`
+	EntityID      string `json:"entity_id"`
+	Action        string `json:"action"`
+	Actor         string `json:"actor"`
+	Role          string `json:"role"`
+	PreviousState string `gorm:"type:text" json:"previous_state"`
+	NewState      string `gorm:"type:text" json:"new_state"`
+	Details       string `json:"details"`
+	LegacyHash    string `json:"legacy_hash"`
+}
+
+type NotificationOutbox struct {
+	ID            int64      `gorm:"primaryKey;autoIncrement" json:"id"`
+	CreatedAt     time.Time  `json:"created_at"`
+	Type          string     `json:"type"`
+	Reference     string     `json:"reference"`
+	Recipient     string     `json:"recipient"`
+	Subject       string     `json:"subject"`
+	BodyHTML      string     `json:"body_html"`
+	Status        string     `json:"status"`
+	Attempts      int        `json:"attempts"`
+	LastError     string     `json:"last_error"`
+	NextAttemptAt time.Time  `json:"next_attempt_at"`
+	SentAt        *time.Time `json:"sent_at"`
+	LedgerSeq     *int64     `json:"ledger_seq"`
+}
+
+func (NotificationOutbox) TableName() string { return "notification_outbox" }

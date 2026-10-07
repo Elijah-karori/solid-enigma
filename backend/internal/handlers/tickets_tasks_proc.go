@@ -2,7 +2,10 @@ package handlers
 
 import (
 	"fmt"
+	"github.com/google/uuid"
+	"gorm.io/gorm"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -10,30 +13,93 @@ import (
 	"github.com/ont/inventory-backend/internal/models"
 )
 
-// Tasks, Tickets, Procurement & Projects APIs
+// Tasks APIs
+func GetTasks(c echo.Context) error {
+	var tasks []models.TechnicianTask
+	q := db.DB.Order("created_at desc")
+	if !can(c, "viewAllTasks") {
+		q = q.Where("lower(assigned_personnel) = ? OR lower(assignee_email) = ?", strings.ToLower(actorName(c)), actorEmail(c))
+	}
+	q.Find(&tasks)
+	return c.JSON(http.StatusOK, tasks)
+}
+
+func CreateTask(c echo.Context) error {
+	var task models.TechnicianTask
+	if err := c.Bind(&task); err != nil {
+		return c.JSON(http.StatusBadRequest, echo.Map{"error": err.Error()})
+	}
+	task.TaskID = fmt.Sprintf("TASK-%d", time.Now().UnixNano()%100000)
+	task.CreatedAt = time.Now()
+	task.UpdatedAt = time.Now()
+
+	if err := db.DB.Create(&task).Error; err != nil {
+		return c.JSON(http.StatusInternalServerError, echo.Map{"error": err.Error()})
+	}
+	return c.JSON(http.StatusOK, task)
+}
 
 // Tickets & Device Replacement APIs
 func GetTickets(c echo.Context) error {
 	var tickets []models.CustomerTicket
-	db.DB.Order("date_logged desc").Find(&tickets)
+	q := db.DB.Order("date_logged desc")
+	if !can(c, "viewAllTickets") {
+		q = q.Where("lower(assigned_technician) = ? OR lower(assigned_technician) = ?", strings.ToLower(actorName(c)), actorEmail(c))
+	}
+	q.Find(&tickets)
 	return c.JSON(http.StatusOK, tickets)
 }
 
 func CreateTicket(c echo.Context) error {
-	var ticket models.CustomerTicket
-	if err := c.Bind(&ticket); err != nil {
+	var body struct {
+		CustomerName string `json:"customer_name"`
+		Category     string `json:"issue_category"`
+		Priority     string `json:"priority"`
+		Technician   string `json:"assigned_technician"`
+		CreateTask   *bool  `json:"create_task"`
+		Notes        string `json:"resolution_notes"`
+		CustomerID   string `json:"customer_id"`
+		HotspotID    string `json:"hotspot_id"`
+		DeviceAsset  string `json:"device_asset_id"`
+		OldSN        string `json:"old_device_sn"`
+		NewSN        string `json:"new_device_sn"`
+	}
+	if err := c.Bind(&body); err != nil {
 		return c.JSON(http.StatusBadRequest, echo.Map{"error": err.Error()})
 	}
-	ticket.TicketID = fmt.Sprintf("TCK-%d", time.Now().UnixNano()%100000)
-	ticket.DateLogged = time.Now()
-	ticket.TicketStatus = "Open"
-	ticket.CreatedAt = time.Now()
-	ticket.UpdatedAt = time.Now()
 
-	if err := db.DB.Create(&ticket).Error; err != nil {
-		return c.JSON(http.StatusInternalServerError, echo.Map{"error": err.Error()})
+	createTask := true
+	if body.CreateTask != nil {
+		createTask = *body.CreateTask
 	}
-	return c.JSON(http.StatusOK, ticket)
+
+	email := actorEmail(c)
+	role := actorRole(c)
+	var userUUID *uuid.UUID
+	if uid, ok := c.Get("user_id").(string); ok && uid != "" {
+		if parsed, err := uuid.Parse(uid); err == nil {
+			userUUID = &parsed
+		}
+	}
+
+	var ticketID string
+	err := db.WithActor(c.Request().Context(), email, role, func(tx *gorm.DB) error {
+		return tx.Raw("SELECT create_ticket(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			nilIfBlank(body.CustomerName), nilIfBlank(body.Category), nilIfBlank(body.Priority),
+			nilIfBlank(body.Technician), createTask, nilIfBlank(body.Notes), nilIfBlank(body.CustomerID),
+			nilIfBlank(body.HotspotID), nilIfBlank(body.DeviceAsset), nilIfBlank(body.OldSN),
+			nilIfBlank(body.NewSN), userUUID,
+		).Scan(&ticketID).Error
+	})
+
+	if err != nil {
+		return c.JSON(http.StatusUnprocessableEntity, echo.Map{"error": err.Error()})
+	}
+
+	return c.JSON(http.StatusOK, echo.Map{
+		"message":   "Ticket created successfully",
+		"ticket_id": ticketID,
+	})
 }
 
 func UpdateTicket(c echo.Context) error {
@@ -43,8 +109,35 @@ func UpdateTicket(c echo.Context) error {
 		return c.JSON(http.StatusNotFound, echo.Map{"error": "Ticket not found"})
 	}
 
-	if err := c.Bind(&ticket); err != nil {
-		return c.JSON(http.StatusBadRequest, echo.Map{"error": err.Error()})
+	if can(c, "viewAllTickets") {
+		if err := c.Bind(&ticket); err != nil {
+			return c.JSON(http.StatusBadRequest, echo.Map{"error": err.Error()})
+		}
+		ticket.TicketID = id // the URL decides which ticket, never the body
+	} else {
+		// technicians: only their own tickets, and only status + notes
+		if !isMe(c, ticket.AssignedTechnician) {
+			return c.JSON(http.StatusForbidden, echo.Map{"error": "You can only update tickets assigned to you."})
+		}
+		var in struct {
+			TicketStatus    string `json:"ticket_status"`
+			ResolutionNotes string `json:"resolution_notes"`
+		}
+		if err := c.Bind(&in); err != nil {
+			return c.JSON(http.StatusBadRequest, echo.Map{"error": err.Error()})
+		}
+		if in.TicketStatus != "" && in.TicketStatus != "In Progress" && in.TicketStatus != "Resolved" {
+			return c.JSON(http.StatusForbidden, echo.Map{"error": "Technicians can set In Progress or Resolved."})
+		}
+		if in.TicketStatus == "Resolved" && strings.TrimSpace(in.ResolutionNotes) == "" {
+			return c.JSON(http.StatusBadRequest, echo.Map{"error": "Add a resolution note before resolving."})
+		}
+		if in.TicketStatus != "" {
+			ticket.TicketStatus = in.TicketStatus
+		}
+		if in.ResolutionNotes != "" {
+			ticket.ResolutionNotes = in.ResolutionNotes
+		}
 	}
 
 	if ticket.TicketStatus == "Resolved" || ticket.TicketStatus == "Closed" {
@@ -76,6 +169,44 @@ func UpdateTicket(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, echo.Map{"error": err.Error()})
 	}
 	return c.JSON(http.StatusOK, ticket)
+}
+
+// Procurement APIs
+func GetProcurement(c echo.Context) error {
+	var proc []models.ProcurementRequest
+	db.DB.Order("date_requested desc").Find(&proc)
+	if !can(c, "viewCosts") {
+		for i := range proc {
+			proc[i].EstUnitCost, proc[i].EstTotal = 0, 0
+		}
+	}
+	return c.JSON(http.StatusOK, proc)
+}
+
+func CreateProcurement(c echo.Context) error {
+	var req models.ProcurementRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, echo.Map{"error": err.Error()})
+	}
+
+	req.RequestedBy = actorName(c)
+	if !can(c, "viewCosts") { // price is taken from the catalog, not trusted from the client
+		var cat models.ItemCatalog
+		if db.DB.Where("sku = ?", req.ItemSKU).First(&cat).Error == nil {
+			req.EstUnitCost = cat.UnitCost
+		}
+	}
+	req.ProcurementID = fmt.Sprintf("PROC-%d", time.Now().UnixNano()%100000)
+	req.DateRequested = time.Now()
+	req.Status = "Pending Finance"
+	req.EstTotal = req.Quantity * req.EstUnitCost
+	req.CreatedAt = time.Now()
+	req.UpdatedAt = time.Now()
+
+	if err := db.DB.Create(&req).Error; err != nil {
+		return c.JSON(http.StatusInternalServerError, echo.Map{"error": err.Error()})
+	}
+	return c.JSON(http.StatusOK, req)
 }
 
 // Projects APIs
@@ -118,8 +249,8 @@ func GetDashboardSummary(c echo.Context) error {
 
 	return c.JSON(http.StatusOK, echo.Map{
 		"total_serialized":     totalSerialized,
-		"in_stock":            totalInStock,
-		"issued":              totalIssued,
+		"in_stock":             totalInStock,
+		"issued":               totalIssued,
 		"pending_requisitions": pendingRequisitions,
 		"open_tickets":         openTickets,
 		"active_projects":      activeProjects,

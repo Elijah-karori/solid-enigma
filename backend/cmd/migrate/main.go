@@ -1,8 +1,8 @@
 package main
 
 import (
-	"log"
 	"github.com/ont/inventory-backend/internal/db"
+	"log"
 )
 
 func main() {

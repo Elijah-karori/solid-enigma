@@ -3,67 +3,78 @@ package email
 import (
 	"bytes"
 	"fmt"
+	"log"
+	"mime"
 	"net/smtp"
 	"strings"
-	"log"
+	"time"
 )
 
-// Sender defines the interface for dispatching emails
+// Sender dispatches emails. Implementations: SMTPSender (production) and LogSender (dev).
 type Sender interface {
 	SendEmail(to []string, subject, body string, isHTML bool) error
 }
 
 type SMTPSender struct {
-	host     string
-	port     int
-	username string
-	password string
-	from     string
+	host, username, password, from string
+	port                           int
 }
 
 func NewSMTPSender(host string, port int, username, password, from string) *SMTPSender {
-	return &SMTPSender{
-		host:     host,
-		port:     port,
-		username: username,
-		password: password,
-		from:     from,
-	}
+	return &SMTPSender{host: host, port: port, username: username, password: password, from: from}
+}
+
+// clean strips CR/LF so user-influenced values can never inject extra headers.
+func clean(s string) string {
+	return strings.NewReplacer("\r", " ", "\n", " ").Replace(strings.TrimSpace(s))
 }
 
 func (s *SMTPSender) SendEmail(to []string, subject, body string, isHTML bool) error {
-	auth := smtp.PlainAuth("", s.username, s.password, s.host)
-
-	var msg bytes.Buffer
-	msg.WriteString(fmt.Sprintf("From: %s\r\n", s.from))
-	msg.WriteString(fmt.Sprintf("To: %s\r\n", strings.Join(to, ",")))
-	msg.WriteString(fmt.Sprintf("Subject: %s\r\n", subject))
-	msg.WriteString("MIME-version: 1.0;\n")
-	if isHTML {
-		msg.WriteString("Content-Type: text/html; charset=\"UTF-8\";\n\n")
-	} else {
-		msg.WriteString("Content-Type: text/plain; charset=\"UTF-8\";\n\n")
+	if len(to) == 0 {
+		return fmt.Errorf("no recipients")
 	}
+	rcpt := make([]string, 0, len(to))
+	for _, t := range to {
+		if t = clean(t); t != "" {
+			rcpt = append(rcpt, t)
+		}
+	}
+	ctype := "text/plain"
+	if isHTML {
+		ctype = "text/html"
+	}
+	var msg bytes.Buffer
+	fmt.Fprintf(&msg, "From: %s\r\n", clean(s.from))
+	fmt.Fprintf(&msg, "To: %s\r\n", strings.Join(rcpt, ", "))
+	fmt.Fprintf(&msg, "Subject: %s\r\n", mime.QEncoding.Encode("utf-8", clean(subject)))
+	fmt.Fprintf(&msg, "Date: %s\r\n", time.Now().Format(time.RFC1123Z))
+	msg.WriteString("MIME-Version: 1.0\r\n")
+	fmt.Fprintf(&msg, "Content-Type: %s; charset=\"UTF-8\"\r\n\r\n", ctype)
 	msg.WriteString(body)
 
-	addr := fmt.Sprintf("%s:%d", s.host, s.port)
-	err := smtp.SendMail(addr, auth, s.from, to, msg.Bytes())
-	if err != nil {
-		fmt.Printf("SMTP Send Error: %v\n", err)
-		return fmt.Errorf("failed to send email: %w", err)
+	auth := smtp.PlainAuth("", s.username, s.password, s.host)
+	// net/smtp upgrades to STARTTLS automatically on port 587 when the server offers it.
+	if err := smtp.SendMail(fmt.Sprintf("%s:%d", s.host, s.port), auth, clean(s.from), rcpt, msg.Bytes()); err != nil {
+		return fmt.Errorf("failed to send email: %w", err) // never log credentials
 	}
-	fmt.Printf("Email sent successfully to %v\n", to)
 	return nil
 }
 
+// LogSender prints emails to the server log (development only: it will print OTP codes).
 type LogSender struct{}
 
+func NewLogSender() *LogSender { return &LogSender{} }
+
 func (s *LogSender) SendEmail(to []string, subject, body string, isHTML bool) error {
-	log.Printf("\n--- [EMAIL LOG] ---\nTo: %s\nSubject: %s\nHTML: %v\nBody:\n%s\n-------------------\n", 
-		strings.Join(to, ", "), subject, isHTML, body)
+	log.Printf("--- [EMAIL LOG] to=%s subject=%q html=%v\n%s\n---", strings.Join(to, ", "), subject, isHTML, body)
 	return nil
 }
 
-func NewLogSender() *LogSender {
-	return &LogSender{}
+// New returns an SMTP sender when fully configured, otherwise the dev log sender.
+func New(host string, port int, user, pass, from string) Sender {
+	if host == "" || user == "" || pass == "" || from == "" {
+		log.Println("SMTP not fully configured - emails (including OTP codes) will be printed to the log. Do not run like this in production.")
+		return NewLogSender()
+	}
+	return NewSMTPSender(host, port, user, pass, from)
 }

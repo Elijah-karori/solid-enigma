@@ -28,7 +28,7 @@ func GetGenieACSDevice(c echo.Context) error {
 			MAC:             "CC:D2:81:4A:2B:11",
 			OnlineStatus:    "Online",
 			LastInform:      &now,
-			OpticalRXPower: -19.45,
+			OpticalRXPower:  -19.45,
 			OpticalTXPower:  2.15,
 			FirmwareVersion: "V5R019C00S100",
 			UptimeSeconds:   345200,

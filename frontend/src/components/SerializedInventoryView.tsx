@@ -202,7 +202,7 @@ export const SerializedInventoryView: React.FC<Props> = ({ onOpenGenieACSModal }
                     <td className="px-4 py-3 text-right space-x-2">
                       {item.serial_number && (
                         <button
-                          onClick={() => onOpenGenieACSModal(item.serial_number)}
+                          onClick={() => item.serial_number && onOpenGenieACSModal(item.serial_number)}
                           className="px-2.5 py-1 bg-purple-950 text-purple-300 hover:bg-purple-900 border border-purple-800 rounded text-[11px] font-medium inline-flex items-center space-x-1"
                         >
                           <Cpu className="w-3 h-3" />
