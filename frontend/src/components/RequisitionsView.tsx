@@ -2,16 +2,17 @@ import React, { useEffect, useState } from 'react';
 import { TechnicianRequisition } from '../types';
 import { Plus, CheckCircle, XCircle, ArrowRight } from 'lucide-react';
 import { apiFetch } from '../api';
+import { useAuth } from '../auth';
 
 export const RequisitionsView: React.FC = () => {
+  const { can, user } = useAuth();
   const [reqs, setReqs] = useState<TechnicianRequisition[]>([]);
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState({
-    technician_name: 'Tech Alpha',
-    item_sku: 'SKU-ONT',
+    item_sku: '',
     quantity_requested: 1,
-    reason_job_ticket: 'TCK-1002 New Installation',
-    project_id: 'PRJ-101',
+    reason_job_ticket: '',
+    project_id: '',
   });
 
   const fetchReqs = () => {
@@ -43,7 +44,7 @@ export const RequisitionsView: React.FC = () => {
   const handleDecide = (id: string, action: string) => {
     apiFetch(`/api/requisitions/${id}/decide`, {
       method: 'POST',
-      body: JSON.stringify({ action, decision_note: `${action} by Store Manager` }),
+      body: JSON.stringify({ action, decision_note: action === 'Reject' ? (window.prompt('Reason for rejecting (the requester will see this):') || '') : '' }),
     })
       .then(() => fetchReqs())
       .catch((err) => console.error('Error deciding requisition:', err));
@@ -62,13 +63,13 @@ export const RequisitionsView: React.FC = () => {
     <div className="space-y-4">
       <div className="flex justify-between items-center bg-slate-900 p-4 rounded-xl border border-slate-800">
         <h3 className="font-bold text-xs text-slate-200">Technician Material Requests & Issue Workflow</h3>
-        <button
+        {can('requestMaterial') && <button
           onClick={() => setShowModal(true)}
           className="flex items-center space-x-2 bg-sky-600 hover:bg-sky-500 text-white px-4 py-2 rounded-lg text-xs font-bold"
         >
           <Plus className="w-4 h-4" />
           <span>New Requisition</span>
-        </button>
+        </button>}
       </div>
 
       <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
@@ -106,7 +107,7 @@ export const RequisitionsView: React.FC = () => {
                   </span>
                 </td>
                 <td className="px-4 py-3 text-right space-x-2">
-                  {r.approval_status === 'Pending Approval' && (
+                  {(r.approval_status === 'Pending Approval' || r.approval_status === 'Pending Finance') && r.technician_name !== user.name && can(r.approval_status === 'Pending Finance' ? 'approveFinance' : 'approveReq') && (
                     <>
                       <button
                         onClick={() => handleDecide(r.requisition_id, 'Approve')}
@@ -122,7 +123,7 @@ export const RequisitionsView: React.FC = () => {
                       </button>
                     </>
                   )}
-                  {r.approval_status === 'Approved - Ready' && (
+                  {r.approval_status === 'Approved - Ready' && can('approveReq') && (
                     <button
                       onClick={() => handleIssue(r.requisition_id)}
                       className="px-3 py-1 bg-sky-600 text-white rounded font-bold inline-flex items-center space-x-1"
@@ -143,16 +144,6 @@ export const RequisitionsView: React.FC = () => {
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 w-full max-w-md space-y-4">
             <h3 className="font-bold text-slate-100 text-base">Create Technician Requisition</h3>
             <form onSubmit={handleCreate} className="space-y-3 text-xs">
-              <div>
-                <label className="block text-slate-400 mb-1">Technician Name</label>
-                <input
-                  type="text"
-                  required
-                  value={form.technician_name}
-                  onChange={(e) => setForm({ ...form, technician_name: e.target.value })}
-                  className="w-full bg-slate-950 border border-slate-800 rounded p-2 text-slate-200"
-                />
-              </div>
               <div>
                 <label className="block text-slate-400 mb-1">Requested SKU</label>
                 <input

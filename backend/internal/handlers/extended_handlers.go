@@ -3,8 +3,13 @@ package handlers
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"github.com/ont/inventory-backend/internal/pdf"
 	"net/http"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -80,7 +85,7 @@ func ChangePassword(c echo.Context) error {
 	}
 
 	user.PasswordHash = string(hashed)
-	user.MustChangePassword = false
+	user.MustResetPassword = false
 	user.UpdatedAt = time.Now()
 	db.DB.Save(&user)
 
@@ -150,16 +155,16 @@ func SaveUser(c echo.Context) error {
 
 	if err == gorm.ErrRecordNotFound {
 		user = models.User{
-			ID:                 uuid.New(),
-			Email:              req.Email,
-			Name:               req.Name,
-			Role:               req.Role,
-			Status:             req.Status,
-			SiteStation:        req.Site,
-			ContactInfo:        req.Contact,
-			MustChangePassword: true,
-			CreatedAt:          time.Now(),
-			UpdatedAt:          time.Now(),
+			ID:                uuid.New(),
+			Email:             req.Email,
+			Name:              req.Name,
+			Role:              req.Role,
+			Status:            req.Status,
+			SiteStation:       req.Site,
+			ContactInfo:       req.Contact,
+			MustResetPassword: true,
+			CreatedAt:         time.Now(),
+			UpdatedAt:         time.Now(),
 		}
 		if req.Role == "" {
 			user.Role = "Technician"
@@ -204,6 +209,7 @@ type MovementRequest struct {
 	Direction string  `json:"direction"` // Stock In, Stock Out, Transfer, Adjustment
 	ItemType  string  `json:"item_type"` // bulk, serialized
 	ItemID    string  `json:"item_id"`   // SKU or AssetID
+	AssetID   string  `json:"asset_id"`
 	Model     string  `json:"model"`
 	Quantity  float64 `json:"quantity"`
 	User      string  `json:"user"`
@@ -215,15 +221,12 @@ type MovementRequest struct {
 }
 
 func RecordStockMovement(c echo.Context) error {
-	actorEmail := c.Get("email").(string)
-	actorRole := fmt.Sprintf("%v", c.Get("role"))
+	email := actorEmail(c)
+	role := actorRole(c)
 
 	var req MovementRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, echo.Map{"error": err.Error()})
-	}
-	if req.ItemID == "" || req.Quantity <= 0 {
-		return c.JSON(http.StatusBadRequest, echo.Map{"error": "Item ID and Quantity (>0) are required"})
 	}
 
 	dir := strings.TrimSpace(req.Direction)
@@ -233,66 +236,27 @@ func RecordStockMovement(c echo.Context) error {
 		dir = "Stock In"
 	}
 
-	err := db.DB.Transaction(func(tx *gorm.DB) error {
-		var cat models.ItemCatalog
-		tx.Where("sku = ?", req.ItemID).First(&cat)
-
-		// Check for Negative Stock on Stock Out for Bulk Items
-		if dir == "Stock Out" && req.ItemType != "serialized" {
-			var totalIn, totalOut float64
-			tx.Model(&models.InventoryTransaction{}).Where("sku = ? AND direction = 'Stock In'", req.ItemID).Select("COALESCE(SUM(quantity), 0)").Scan(&totalIn)
-			tx.Model(&models.InventoryTransaction{}).Where("sku = ? AND direction = 'Stock Out'", req.ItemID).Select("COALESCE(SUM(quantity), 0)").Scan(&totalOut)
-			available := totalIn - totalOut
-
-			if available < req.Quantity {
-				return fmt.Errorf("insufficient stock for SKU %s: available %.0f, requested %.0f", req.ItemID, available, req.Quantity)
-			}
+	var txID uuid.UUID
+	var userUUID *uuid.UUID
+	if uid, ok := c.Get("user_id").(string); ok && uid != "" {
+		if parsed, err := uuid.Parse(uid); err == nil {
+			userUUID = &parsed
 		}
+	}
 
-		if req.ItemType == "serialized" {
-			var dev models.SerializedInventory
-			if err := tx.Where("asset_id = ?", req.ItemID).First(&dev).Error; err != nil {
-				return fmt.Errorf("serialized unit %s not found", req.ItemID)
-			}
-			if dir == "Stock Out" {
-				dev.Status = "Issued / Out"
-				dev.Custodian = req.User
-				dev.Location = req.Site
-			} else {
-				dev.Status = "In Stock"
-				dev.Custodian = ""
-				dev.Location = req.Site
-			}
-			dev.UpdatedAt = time.Now()
-			tx.Save(&dev)
-		}
-
-		txLog := models.InventoryTransaction{
-			ID:              uuid.New(),
-			TransactionDate: time.Now(),
-			Direction:       dir,
-			SKU:             req.ItemID,
-			ItemName:        req.Model,
-			Quantity:        req.Quantity,
-			RequestedBy:     req.User,
-			Role:            actorRole,
-			SiteReference:   req.Site,
-			UnitCost:        cat.UnitCost,
-			TotalCost:       cat.UnitCost * req.Quantity,
-			CostType:        req.CostType,
-			TaskID:          req.TaskID,
-			ProjectID:       req.ProjectID,
-			Notes:           req.Notes,
-		}
-		return tx.Create(&txLog).Error
+	err := db.WithActor(c.Request().Context(), email, role, func(tx *gorm.DB) error {
+		return tx.Raw("SELECT record_movement(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			dir, req.ItemID, req.Quantity, nilIfBlank(req.AssetID), nilIfBlank(req.CostType),
+			nilIfBlank(req.ProjectID), nilIfBlank(req.TaskID), nilIfBlank(req.Site), nilIfBlank(req.Notes),
+			userUUID, time.Now(),
+		).Scan(&txID).Error
 	})
 
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, echo.Map{"error": err.Error()})
+		return c.JSON(http.StatusUnprocessableEntity, echo.Map{"error": err.Error()})
 	}
 
-	LogAudit(actorEmail, actorRole, "InventoryTransaction", req.ItemID, dir, "", fmt.Sprintf("Qty: %.0f", req.Quantity), req.Notes)
-	return c.JSON(http.StatusOK, echo.Map{"message": "Movement recorded successfully"})
+	return c.JSON(http.StatusOK, echo.Map{"message": "Movement recorded successfully", "id": txID})
 }
 
 // ---------------- BATCH SERIALIZED STOCK IN & DEVICE REPLACEMENT ----------------
@@ -313,93 +277,41 @@ type BatchStockInReq struct {
 }
 
 func BatchStockInSerialized(c echo.Context) error {
-	actorEmail := c.Get("email").(string)
-	actorRole := fmt.Sprintf("%v", c.Get("role"))
+	email := actorEmail(c)
+	role := actorRole(c)
 
 	var req BatchStockInReq
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, echo.Map{"error": err.Error()})
 	}
-	if req.SKU == "" || len(req.Units) == 0 {
-		return c.JSON(http.StatusBadRequest, echo.Map{"error": "SKU and at least 1 unit are required"})
+
+	unitsJSON, err := json.Marshal(req.Units)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, echo.Map{"error": "Invalid units list"})
 	}
 
-	var cat models.ItemCatalog
-	db.DB.Where("sku = ?", req.SKU).First(&cat)
-
-	count := 0
-	err := db.DB.Transaction(func(tx *gorm.DB) error {
-		for _, u := range req.Units {
-			if u.SN == "" && u.MAC == "" {
-				continue
-			}
-
-			assetID := fmt.Sprintf("%s-%s", req.SKU, u.SN)
-			if u.SN == "" {
-				assetID = fmt.Sprintf("%s-%s", req.SKU, u.MAC)
-			}
-
-			// Duplicate check
-			var existing models.SerializedInventory
-			if u.SN != "" && tx.Where("serial_number = ?", u.SN).First(&existing).Error == nil {
-				return fmt.Errorf("duplicate serial number: %s already exists", u.SN)
-			}
-
-			dev := models.SerializedInventory{
-				AssetID:      assetID,
-				SKU:          req.SKU,
-				AssetType:    cat.AssetType,
-				Manufacturer: cat.Manufacturer,
-				Model:        cat.Model,
-				AccessTech:   cat.AccessTech,
-				ProductID:    u.ProductID,
-				MAC:          u.MAC,
-				SerialNumber: u.SN,
-				Status:       "In Stock",
-				Condition:    u.Condition,
-				Location:     req.Site,
-				Notes:        req.Notes + " " + u.Remarks,
-				CreatedAt:    time.Now(),
-				UpdatedAt:    time.Now(),
-			}
-			if dev.Condition == "" {
-				dev.Condition = "New"
-			}
-			if dev.Location == "" {
-				dev.Location = "Main Store"
-			}
-
-			if err := tx.Create(&dev).Error; err != nil {
-				return err
-			}
-
-			txLog := models.InventoryTransaction{
-				ID:              uuid.New(),
-				TransactionDate: time.Now(),
-				Direction:       "Stock In",
-				SKU:             req.SKU,
-				ItemName:        cat.Model,
-				Quantity:        1,
-				RequestedBy:     actorEmail,
-				Role:            actorRole,
-				SiteReference:   req.Site,
-				UnitCost:        cat.UnitCost,
-				TotalCost:       cat.UnitCost,
-				AssetID:         dev.AssetID,
-				Notes:           fmt.Sprintf("Batch Stock In S/N: %s, MAC: %s", u.SN, u.MAC),
-			}
-			tx.Create(&txLog)
-			count++
+	var userUUID *uuid.UUID
+	if uid, ok := c.Get("user_id").(string); ok && uid != "" {
+		if parsed, err := uuid.Parse(uid); err == nil {
+			userUUID = &parsed
 		}
-		return nil
+	}
+
+	var createdAssetIDs []string
+	err = db.WithActor(c.Request().Context(), email, role, func(tx *gorm.DB) error {
+		return tx.Raw("SELECT receive_serialized_batch(?, ?::jsonb, ?, ?, ?)",
+			req.SKU, string(unitsJSON), req.Site, req.Notes, userUUID,
+		).Scan(&createdAssetIDs).Error
 	})
 
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, echo.Map{"error": err.Error()})
+		return c.JSON(http.StatusUnprocessableEntity, echo.Map{"error": err.Error()})
 	}
 
-	LogAudit(actorEmail, actorRole, "SerializedInventory", req.SKU, "Batch Stock In", "", fmt.Sprintf("Received %d units", count), req.Notes)
-	return c.JSON(http.StatusOK, echo.Map{"message": fmt.Sprintf("Successfully received %d units into stock", count)})
+	return c.JSON(http.StatusOK, echo.Map{
+		"message":   fmt.Sprintf("Successfully received %d units into stock", len(createdAssetIDs)),
+		"asset_ids": createdAssetIDs,
+	})
 }
 
 func ReplaceDevice(c echo.Context) error {
@@ -477,74 +389,64 @@ func ReplaceDevice(c echo.Context) error {
 // ---------------- UNIVERSAL SCANNER LOOKUP ----------------
 
 func UniversalLookup(c echo.Context) error {
-	query := strings.TrimSpace(c.QueryParam("q"))
-	if query == "" {
-		return c.JSON(http.StatusBadRequest, echo.Map{"error": "Query parameter 'q' is required"})
+	code := strings.TrimSpace(c.QueryParam("code"))
+	if code == "" {
+		return c.JSON(http.StatusBadRequest, echo.Map{"error": "Query parameter 'code' is required"})
 	}
 
-	// 1. Search Serialized Inventory
+	cleanCode := strings.ToUpper(regexp.MustCompile(`[^a-zA-Z0-9]`).ReplaceAllString(code, ""))
+
 	var unit models.SerializedInventory
-	if err := db.DB.Where("asset_id = ? OR serial_number = ? OR mac = ? OR product_id = ?", query, query, query, query).First(&unit).Error; err == nil {
+	err := db.DB.Where(
+		"UPPER(asset_id) = ? OR UPPER(serial_number) = ? OR UPPER(REGEXP_REPLACE(mac, '[:.-]', '', 'g')) = ? OR UPPER(product_id) = ?",
+		cleanCode, cleanCode, cleanCode, cleanCode,
+	).First(&unit).Error
+
+	if err == nil {
+		res := echo.Map{
+			"type": "unit",
+			"unit": unit,
+		}
+		if can(c, "manageCustomers") || can(c, "viewAllTickets") {
+			if unit.CustomerAccount != "" {
+				var cust models.Customer
+				if db.DB.Where("customer_account = ?", unit.CustomerAccount).First(&cust).Error == nil {
+					res["customer"] = cust
+				}
+			}
+			if unit.LinkedTicketID != "" {
+				var tck models.CustomerTicket
+				if db.DB.Where("ticket_id = ?", unit.LinkedTicketID).First(&tck).Error == nil {
+					res["ticket"] = tck
+				}
+			}
+		}
+		return c.JSON(http.StatusOK, res)
+	}
+
+	var item models.ItemCatalog
+	err = db.DB.Where("UPPER(sku) = ? OR UPPER(model) = ?", cleanCode, cleanCode).First(&item).Error
+	if err == nil {
+		if !can(c, "viewCosts") {
+			item.UnitCost = 0
+		}
 		return c.JSON(http.StatusOK, echo.Map{
-			"kind":      "unit",
-			"id":        unit.AssetID,
-			"sku":       unit.SKU,
-			"model":     unit.Model,
-			"sn":        unit.SerialNumber,
-			"mac":       unit.MAC,
-			"status":    unit.Status,
-			"condition": unit.Condition,
-			"location":  unit.Location,
-			"custodian": unit.Custodian,
+			"type": "item",
+			"item": item,
 		})
 	}
 
-	// 2. Search Item Catalog
-	var cat models.ItemCatalog
-	if err := db.DB.Where("sku = ? OR model = ?", query, query).First(&cat).Error; err == nil {
-		var totalIn, totalOut float64
-		db.DB.Model(&models.InventoryTransaction{}).Where("sku = ? AND direction = 'Stock In'", cat.SKU).Select("COALESCE(SUM(quantity), 0)").Scan(&totalIn)
-		db.DB.Model(&models.InventoryTransaction{}).Where("sku = ? AND direction = 'Stock Out'", cat.SKU).Select("COALESCE(SUM(quantity), 0)").Scan(&totalOut)
+	return c.JSON(http.StatusNotFound, echo.Map{"error": fmt.Sprintf("No device or catalog item found matching '%s'", code)})
+}
 
-		return c.JSON(http.StatusOK, echo.Map{
-			"kind":     "sku",
-			"sku":      cat.SKU,
-			"model":    cat.Model,
-			"tracking": cat.TrackingType,
-			"scope":    cat.ProjectScope,
-			"net":      totalIn - totalOut,
-		})
-	}
-
-	return c.JSON(http.StatusNotFound, echo.Map{"error": fmt.Sprintf("No item or unit found matching '%s'", query)})
+func GetUnitHistory(c echo.Context) error {
+	assetID := c.Param("id")
+	var history []map[string]any
+	db.DB.Raw("SELECT * FROM v_unit_history WHERE asset_id = ? ORDER BY at DESC", assetID).Scan(&history)
+	return c.JSON(http.StatusOK, history)
 }
 
 // ---------------- TECHNICIAN TASKS & LINKAGE ----------------
-
-func GetTasks(c echo.Context) error {
-	var tasks []models.TechnicianTask
-	db.DB.Order("created_at desc").Find(&tasks)
-	return c.JSON(http.StatusOK, tasks)
-}
-
-func CreateTask(c echo.Context) error {
-	actorEmail := c.Get("email").(string)
-	var task models.TechnicianTask
-	if err := c.Bind(&task); err != nil {
-		return c.JSON(http.StatusBadRequest, echo.Map{"error": err.Error()})
-	}
-
-	task.TaskID = fmt.Sprintf("TASK-%d", time.Now().UnixNano()%100000)
-	task.Status = "Assigned"
-	task.CreatedBy = actorEmail
-	task.CreatedAt = time.Now()
-	task.UpdatedAt = time.Now()
-
-	if err := db.DB.Create(&task).Error; err != nil {
-		return c.JSON(http.StatusInternalServerError, echo.Map{"error": err.Error()})
-	}
-	return c.JSON(http.StatusOK, task)
-}
 
 func UpdateTaskStatus(c echo.Context) error {
 	taskID := c.Param("id")
@@ -572,38 +474,6 @@ func UpdateTaskStatus(c echo.Context) error {
 }
 
 // ---------------- PROCUREMENT WORKFLOW ----------------
-
-func GetProcurement(c echo.Context) error {
-	var procs []models.ProcurementRequest
-	db.DB.Order("date_requested desc").Find(&procs)
-	return c.JSON(http.StatusOK, procs)
-}
-
-func CreateProcurement(c echo.Context) error {
-	actorEmail := c.Get("email").(string)
-	var req models.ProcurementRequest
-	if err := c.Bind(&req); err != nil {
-		return c.JSON(http.StatusBadRequest, echo.Map{"error": err.Error()})
-	}
-
-	req.ProcurementID = fmt.Sprintf("PROC-%d", time.Now().UnixNano()%100000)
-	req.DateRequested = time.Now()
-	req.RequestedBy = actorEmail
-	req.Status = "Pending Finance"
-	req.CreatedAt = time.Now()
-	req.UpdatedAt = time.Now()
-
-	var cat models.ItemCatalog
-	if err := db.DB.Where("sku = ?", req.ItemSKU).First(&cat).Error; err == nil {
-		req.EstUnitCost = cat.UnitCost
-		req.EstTotal = cat.UnitCost * req.Quantity
-	}
-
-	if err := db.DB.Create(&req).Error; err != nil {
-		return c.JSON(http.StatusInternalServerError, echo.Map{"error": err.Error()})
-	}
-	return c.JSON(http.StatusOK, req)
-}
 
 func DecideProcurement(c echo.Context) error {
 	id := c.Param("id")
@@ -659,48 +529,27 @@ func OrderProcurement(c echo.Context) error {
 
 func ReceiveProcurement(c echo.Context) error {
 	id := c.Param("id")
-	actorEmail := c.Get("email").(string)
-	actorRole := fmt.Sprintf("%v", c.Get("role"))
-
-	err := db.DB.Transaction(func(tx *gorm.DB) error {
-		var req models.ProcurementRequest
-		if err := tx.Where("procurement_id = ?", id).First(&req).Error; err != nil {
-			return err
+	email := actorEmail(c)
+	role := actorRole(c)
+	var userUUID *uuid.UUID
+	if uid, ok := c.Get("user_id").(string); ok && uid != "" {
+		if parsed, err := uuid.Parse(uid); err == nil {
+			userUUID = &parsed
 		}
+	}
 
-		req.Status = "Received"
-		req.ReceivedDate = time.Now().Format("2006-01-02")
-		req.ReceivedQuantity = req.Quantity
-		req.UpdatedAt = time.Now()
-		tx.Save(&req)
-
-		// Post Stock In
-		var cat models.ItemCatalog
-		tx.Where("sku = ?", req.ItemSKU).First(&cat)
-
-		txLog := models.InventoryTransaction{
-			ID:              uuid.New(),
-			TransactionDate: time.Now(),
-			Direction:       "Stock In",
-			SKU:             req.ItemSKU,
-			ItemName:        cat.Model,
-			Quantity:        req.Quantity,
-			RequestedBy:     actorEmail,
-			Role:            actorRole,
-			SiteReference:   "Main Store",
-			UnitCost:        req.EstUnitCost,
-			TotalCost:       req.EstTotal,
-			ProjectID:       req.ProjectID,
-			Notes:           fmt.Sprintf("Received from Procurement PO: %s", req.PORef),
-		}
-		return tx.Create(&txLog).Error
+	var count int
+	err := db.WithActor(c.Request().Context(), email, role, func(tx *gorm.DB) error {
+		return tx.Raw("SELECT receive_procurement(?, ?)", id, userUUID).Scan(&count).Error
 	})
 
 	if err != nil {
-		return c.JSON(http.StatusInternalServerError, echo.Map{"error": err.Error()})
+		return c.JSON(http.StatusUnprocessableEntity, echo.Map{"error": err.Error()})
 	}
 
-	return c.JSON(http.StatusOK, echo.Map{"message": "Procurement items received into stock"})
+	return c.JSON(http.StatusOK, echo.Map{
+		"message": fmt.Sprintf("Received %d item(s) from procurement into stock", count),
+	})
 }
 
 // ---------------- DELIVERY NOTES & PAYMENTS ----------------
@@ -712,36 +561,103 @@ func GetDeliveryNotes(c echo.Context) error {
 }
 
 func GenerateDeliveryNote(c echo.Context) error {
-	actorEmail := c.Get("email").(string)
+	email := actorEmail(c)
+	role := actorRole(c)
+
 	var body struct {
-		Ref      string `json:"ref"`
-		Type     string `json:"type"` // Delivery note, Receipt note
-		Project  string `json:"project"`
-		Recipient string `json:"recipient"`
-		Value    float64 `json:"value"`
+		Ref       string  `json:"ref"`
+		Type      string  `json:"type"`
+		Project   string  `json:"project"`
+		Recipient string  `json:"recipient"`
+		Value     float64 `json:"value"`
 	}
 	if err := c.Bind(&body); err != nil {
 		return c.JSON(http.StatusBadRequest, echo.Map{"error": err.Error()})
 	}
 
 	docNo := fmt.Sprintf("DN-%d", time.Now().UnixNano()%100000)
+	docType := body.Type
+	if docType == "" {
+		docType = "Delivery note"
+	}
+
+	var txs []models.InventoryTransaction
+	db.DB.Where("site_reference = ? OR project_id = ? OR requisition_id = ? OR procurement_id = ?", body.Ref, body.Project, body.Ref, body.Ref).Find(&txs)
+
+	pdfItems := make([]pdf.DeliveryNoteItem, len(txs))
+	showCosts := can(c, "viewCosts")
+	var totalVal float64
+
+	for i, tx := range txs {
+		pdfItems[i] = pdf.DeliveryNoteItem{
+			SKU:       tx.SKU,
+			Model:     tx.ItemName,
+			AssetID:   tx.AssetID,
+			Quantity:  tx.Quantity,
+			UnitCost:  tx.UnitCost,
+			TotalCost: tx.TotalCost,
+		}
+		totalVal += tx.TotalCost
+	}
+
+	var compSetting models.Setting
+	compName := "ONT Network Operations"
+	if db.DB.Where("key = ?", "COMPANY_NAME").First(&compSetting).Error == nil && compSetting.Value != "" {
+		compName = compSetting.Value
+	}
+
+	filePath, err := pdf.GenerateDeliveryNotePDF(pdf.DeliveryNoteData{
+		DocNo:       docNo,
+		Type:        docType,
+		CompanyName: compName,
+		Reference:   body.Ref,
+		ProjectID:   body.Project,
+		Recipient:   body.Recipient,
+		CreatedBy:   email,
+		Date:        time.Now(),
+		Items:       pdfItems,
+		ShowCosts:   showCosts,
+		TotalValue:  totalVal,
+	})
+	_ = filePath
+
+	fileName := fmt.Sprintf("%s.pdf", docNo)
+	driveURL := fmt.Sprintf("/api/delivery-notes/%s/pdf", docNo)
+
 	doc := models.DeliveryNote{
 		DocNo:         docNo,
-		Type:          body.Type,
+		Type:          docType,
 		Reference:     body.Ref,
 		ProjectID:     body.Project,
 		Recipient:     body.Recipient,
-		CreatedBy:     actorEmail,
-		ValueKES:      body.Value,
+		FileName:      fileName,
+		DriveURL:      driveURL,
+		CreatedBy:     email,
+		ValueKES:      totalVal,
 		PaymentStatus: "Pending",
 		CreatedAt:     time.Now(),
 	}
-	if doc.Type == "" {
-		doc.Type = "Delivery note"
+
+	err = db.WithActor(c.Request().Context(), email, role, func(tx *gorm.DB) error {
+		return tx.Create(&doc).Error
+	})
+
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, echo.Map{"error": err.Error()})
 	}
 
-	db.DB.Create(&doc)
 	return c.JSON(http.StatusOK, doc)
+}
+
+func DownloadDeliveryNotePDF(c echo.Context) error {
+	docNo := c.Param("id")
+	filePath := filepath.Join("storage/delivery_notes", fmt.Sprintf("%s.pdf", docNo))
+
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		return c.JSON(http.StatusNotFound, echo.Map{"error": "PDF not found"})
+	}
+
+	return c.File(filePath)
 }
 
 func UpdatePaymentStatus(c echo.Context) error {
@@ -776,50 +692,23 @@ func GetAuditLogs(c echo.Context) error {
 }
 
 func VerifyAuditTrail(c echo.Context) error {
-	var logs []models.AuditLedger
-	db.DB.Order("event_timestamp asc").Find(&logs)
-
-	prevHash := "GENESIS"
-	for idx, audit := range logs {
-		if idx > 0 && audit.PrevHash != prevHash {
-			return c.JSON(http.StatusOK, echo.Map{
-				"intact":   false,
-				"brokenAt": audit.ID.String(),
-				"row":      idx + 1,
-				"message":  fmt.Sprintf("Tampering detected at record %s (row %d): PrevHash mismatch", audit.ID.String(), idx+1),
-			})
-		}
-
-		dataToHash := fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s|%s|%s",
-			audit.PrevHash, audit.ActorEmail, audit.ActorRole, audit.EntityType, audit.EntityID, audit.Action, audit.PreviousState, audit.NewState, audit.EventTimestamp.Format(time.RFC3339))
-		hashBytes := sha256.Sum256([]byte(dataToHash))
-		computedHash := hex.EncodeToString(hashBytes[:])
-
-		if audit.Hash != "" && audit.Hash != computedHash {
-			return c.JSON(http.StatusOK, echo.Map{
-				"intact":   false,
-				"brokenAt": audit.ID.String(),
-				"row":      idx + 1,
-				"message":  fmt.Sprintf("Tampering detected at record %s (row %d): SHA-256 hash mismatch", audit.ID.String(), idx+1),
-			})
-		}
-
-		if audit.Hash != "" {
-			prevHash = audit.Hash
-		}
+	type VerifyResult struct {
+		Intact    bool   `json:"intact"`
+		Checked   int64  `json:"checked"`
+		BrokenSeq *int64 `json:"broken_seq"`
+		Reason    string `json:"reason"`
 	}
-
-	return c.JSON(http.StatusOK, echo.Map{
-		"intact":  true,
-		"count":   len(logs),
-		"message": fmt.Sprintf("Audit trail intact - %d chained records verified.", len(logs)),
-	})
+	var res VerifyResult
+	if err := db.DB.Raw("SELECT intact, checked, broken_seq, reason FROM audit_verify()").Scan(&res).Error; err != nil {
+		return c.JSON(http.StatusInternalServerError, echo.Map{"error": err.Error()})
+	}
+	return c.JSON(http.StatusOK, res)
 }
 
 // ---------------- INVENTORY SETTINGS & LOW STOCK SCAN ----------------
 
 func GetSettings(c echo.Context) error {
-	var settings []models.InventorySetting
+	var settings []models.Setting
 	db.DB.Find(&settings)
 
 	out := make(map[string]string)
@@ -835,14 +724,27 @@ func SaveSettings(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, echo.Map{"error": err.Error()})
 	}
 
-	for k, v := range body {
-		setting := models.InventorySetting{
-			Key:       k,
-			Value:     v,
-			UpdatedAt: time.Now(),
+	email := actorEmail(c)
+	role := actorRole(c)
+
+	err := db.WithActor(c.Request().Context(), email, role, func(tx *gorm.DB) error {
+		for k, v := range body {
+			setting := models.Setting{
+				Key:       k,
+				Value:     v,
+				UpdatedAt: time.Now(),
+			}
+			if err := tx.Save(&setting).Error; err != nil {
+				return err
+			}
 		}
-		db.DB.Save(&setting)
+		return nil
+	})
+
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, echo.Map{"error": err.Error()})
 	}
+
 	return c.JSON(http.StatusOK, echo.Map{"message": "Settings saved successfully"})
 }
 
@@ -861,7 +763,6 @@ func RunLowStockScan(c echo.Context) error {
 			lowStockCount++
 			// Log notification
 			notif := models.NotificationLog{
-				ID:        uuid.New(),
 				Timestamp: time.Now(),
 				Type:      "LOW_STOCK",
 				Reference: item.SKU,

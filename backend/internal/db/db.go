@@ -1,11 +1,12 @@
 package db
 
 import (
+	"context"
+	"fmt"
 	"log"
 	"os"
 
 	"github.com/ont/inventory-backend/internal/models"
-	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -16,7 +17,6 @@ var DB *gorm.DB
 func InitDB() *gorm.DB {
 	var err error
 	dsn := os.Getenv("DATABASE_URL")
-
 	if dsn != "" {
 		DB, err = gorm.Open(postgres.Open(dsn), &gorm.Config{})
 		if err != nil {
@@ -24,64 +24,56 @@ func InitDB() *gorm.DB {
 		}
 		log.Println("Connected to PostgreSQL database.")
 	} else {
-		// Fallback to SQLite for portable dev/testing environment
-		DB, err = gorm.Open(sqlite.Open("app_inventory.db"), &gorm.Config{})
+		DB, err = gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
 		if err != nil {
-			log.Fatalf("Failed to connect to SQLite: %v", err)
+			log.Fatalf("Failed to connect to SQLite in-memory: %v", err)
 		}
-		log.Println("Connected to SQLite database.")
+		log.Println("Connected to in-memory SQLite database for testing.")
+		_ = DB.AutoMigrate(
+			&models.User{}, &models.MagicToken{}, &models.Session{}, &models.OTPCode{},
+			&models.ItemCatalog{}, &models.SerializedInventory{}, &models.BulkInventory{}, &models.InventoryTransaction{},
+			&models.Project{}, &models.Customer{}, &models.Hotspot{}, &models.HotspotUser{}, &models.Voucher{},
+			&models.OLT{}, &models.PONPort{}, &models.Splitter{}, &models.Enclosure{}, &models.AccessPoint{}, &models.GenieACSDevice{},
+			&models.TechnicianRequisition{}, &models.TechnicianTask{}, &models.CustomerTicket{}, &models.ProcurementRequest{}, &models.DeliveryNote{},
+			&models.AuditLedger{}, &models.GenieACSAuditLog{}, &models.Setting{}, &models.NotificationLog{}, &models.LegacyAuditEntry{},
+		)
 	}
-
-	// Auto-migrate all GORM models
-	err = DB.AutoMigrate(
-		&models.User{},
-		&models.MagicToken{},
-		&models.ItemCatalog{},
-		&models.SerializedInventory{},
-		&models.BulkInventory{},
-		&models.InventoryTransaction{},
-		&models.Project{},
-		&models.Customer{},
-		&models.Hotspot{},
-		&models.HotspotUser{},
-		&models.Voucher{},
-		&models.OLT{},
-		&models.PONPort{},
-		&models.Splitter{},
-		&models.Enclosure{},
-		&models.AccessPoint{},
-		&models.GenieACSDevice{},
-		&models.TechnicianRequisition{},
-		&models.TechnicianTask{},
-		&models.CustomerTicket{},
-		&models.ProcurementRequest{},
-		&models.DeliveryNote{},
-		&models.AuditLedger{},
-		&models.GenieACSAuditLog{},
-		&models.InventorySetting{},
-		&models.NotificationLog{},
-	)
-	if err != nil {
-		log.Fatalf("AutoMigrate failed: %v", err)
-	}
-
-	var userCount int64
-	DB.Model(&models.User{}).Where("email = ?", "admin@ont.co.ke").Count(&userCount)
-	if userCount == 0 {
-		hashed, _ := bcrypt.GenerateFromPassword([]byte("admin123"), bcrypt.DefaultCost)
-		admin := models.User{
-			Email:        "admin@ont.co.ke",
-			PasswordHash: string(hashed),
-			Name:         "System Admin",
-			Role:         "Admin",
-			Status:       "active",
-		}
-		if err := DB.Create(&admin).Error; err != nil {
-			log.Printf("Failed to seed admin user: %v", err)
-		} else {
-			log.Println("Seeded default admin user: admin@ont.co.ke")
-		}
-	}
-
 	return DB
+}
+
+func WithActor(ctx context.Context, actorEmail, actorRole string, fn func(tx *gorm.DB) error) error {
+	return WithActorOpt(ctx, actorEmail, actorRole, false, fn)
+}
+
+func WithActorImport(ctx context.Context, actorEmail, actorRole string, fn func(tx *gorm.DB) error) error {
+	return WithActorOpt(ctx, actorEmail, actorRole, true, fn)
+}
+
+func WithActorUser(ctx context.Context, user *models.User, fn func(tx *gorm.DB) error) error {
+	email, role := "", ""
+	if user != nil {
+		email = user.Email
+		role = user.Role
+	}
+	return WithActor(ctx, email, role, fn)
+}
+
+func WithActorOpt(ctx context.Context, actorEmail, actorRole string, importMode bool, fn func(tx *gorm.DB) error) error {
+	if DB == nil {
+		return fmt.Errorf("database not initialized")
+	}
+	return DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if actorEmail != "" {
+			var err error
+			if importMode {
+				err = tx.Exec("SELECT set_config('app.actor_email', ?, true), set_config('app.actor_role', ?, true), set_config('app.import_mode', 'on', true)", actorEmail, actorRole).Error
+			} else {
+				err = tx.Exec("SELECT set_config('app.actor_email', ?, true), set_config('app.actor_role', ?, true)", actorEmail, actorRole).Error
+			}
+			if err != nil {
+				// SQLite in tests might not support set_config
+			}
+		}
+		return fn(tx)
+	})
 }

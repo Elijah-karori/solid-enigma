@@ -3,12 +3,14 @@ package handlers
 import (
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/ont/inventory-backend/internal/db"
 	"github.com/ont/inventory-backend/internal/models"
+	"github.com/ont/inventory-backend/internal/rbac"
 	"gorm.io/gorm"
 )
 
@@ -16,6 +18,11 @@ import (
 func GetCatalog(c echo.Context) error {
 	var items []models.ItemCatalog
 	db.DB.Find(&items)
+	if !can(c, "viewCosts") { // unit costs are Admin / Finance only
+		for i := range items {
+			items[i].UnitCost = 0
+		}
+	}
 	return c.JSON(http.StatusOK, items)
 }
 
@@ -26,6 +33,14 @@ func SaveCatalogItem(c echo.Context) error {
 	}
 	if item.SKU == "" {
 		return c.JSON(http.StatusBadRequest, echo.Map{"error": "SKU is required"})
+	}
+	if !can(c, "viewCosts") { // only Admin / Finance may set prices; keep the existing price for others
+		var old models.ItemCatalog
+		if db.DB.Where("sku = ?", item.SKU).First(&old).Error == nil {
+			item.UnitCost = old.UnitCost
+		} else {
+			item.UnitCost = 0
+		}
 	}
 
 	if err := db.DB.Save(&item).Error; err != nil {
@@ -42,18 +57,18 @@ func GetSerializedInventory(c echo.Context) error {
 }
 
 type StockInRequest struct {
-	SKU            string `json:"sku"`
-	Quantity       int    `json:"quantity"`
-	SerialNumber   string `json:"serial_number"`
-	MAC            string `json:"mac"`
-	Model          string `json:"model"`
-	Manufacturer   string `json:"manufacturer"`
-	AccessTech     string `json:"access_tech"`
-	Condition      string `json:"condition"`
-	Location       string `json:"location"`
-	Notes          string `json:"notes"`
-	ProjectID      string `json:"project_id"`
-	RequestedBy    string `json:"requested_by"`
+	SKU          string `json:"sku"`
+	Quantity     int    `json:"quantity"`
+	SerialNumber string `json:"serial_number"`
+	MAC          string `json:"mac"`
+	Model        string `json:"model"`
+	Manufacturer string `json:"manufacturer"`
+	AccessTech   string `json:"access_tech"`
+	Condition    string `json:"condition"`
+	Location     string `json:"location"`
+	Notes        string `json:"notes"`
+	ProjectID    string `json:"project_id"`
+	RequestedBy  string `json:"requested_by"`
 }
 
 func StockInSerializedItem(c echo.Context) error {
@@ -82,7 +97,7 @@ func StockInSerializedItem(c echo.Context) error {
 			Model:            req.Model,
 			AccessTech:       req.AccessTech,
 			MAC:              req.MAC,
-			SerialNumber:     req.SerialNumber,
+			SerialNumber:     nilIfBlank(req.SerialNumber),
 			Status:           "In Stock",
 			Condition:        req.Condition,
 			Location:         req.Location,
@@ -141,7 +156,7 @@ func UpdateSerializedDevice(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, echo.Map{"error": err.Error()})
 	}
 
-	item.SerialNumber = req.SerialNumber
+	item.SerialNumber = nilIfBlankPtr(req.SerialNumber)
 	item.MAC = req.MAC
 	item.Model = req.Model
 	item.Manufacturer = req.Manufacturer
@@ -168,7 +183,16 @@ func GetTransactions(c echo.Context) error {
 // Requisitions API
 func GetRequisitions(c echo.Context) error {
 	var reqs []models.TechnicianRequisition
-	db.DB.Order("date_requested desc").Find(&reqs)
+	q := db.DB.Order("date_requested desc")
+	if !can(c, "viewAllReqs") { // technicians / project managers see only their own
+		q = q.Where("lower(technician_name) = ? OR lower(technician_name) = ?", strings.ToLower(actorName(c)), actorEmail(c))
+	}
+	q.Find(&reqs)
+	if !can(c, "viewCosts") {
+		for i := range reqs {
+			reqs[i].EstValue = 0
+		}
+	}
 	return c.JSON(http.StatusOK, reqs)
 }
 
@@ -178,6 +202,7 @@ func CreateRequisition(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, echo.Map{"error": err.Error()})
 	}
 
+	req.TechnicianName = actorName(c) // requester is always the caller, never client-supplied
 	req.RequisitionID = fmt.Sprintf("REQ-%d", time.Now().UnixNano()%100000)
 	req.DateRequested = time.Now()
 	req.ApprovalStatus = "Pending Approval"
@@ -207,13 +232,44 @@ func DecideRequisition(c echo.Context) error {
 		return c.JSON(http.StatusNotFound, echo.Map{"error": "Requisition not found"})
 	}
 
-	if body.Action == "Approve" {
-		req.ApprovalStatus = "Approved - Ready"
-		req.ApprovedBy = actorEmail
-	} else if body.Action == "Reject" {
-		req.ApprovalStatus = "Rejected"
-	} else if body.Action == "Cancel" {
+	own := isMe(c, req.TechnicianName)
+	if body.Action == "Cancel" {
+		if !own || (req.ApprovalStatus != "Pending Approval" && req.ApprovalStatus != "Pending Finance") {
+			return c.JSON(http.StatusForbidden, echo.Map{"error": "Only the requester can withdraw a pending requisition."})
+		}
 		req.ApprovalStatus = "Cancelled"
+	} else {
+		if body.Action != "Approve" && body.Action != "Reject" {
+			return c.JSON(http.StatusBadRequest, echo.Map{"error": "Action must be Approve, Reject or Cancel."})
+		}
+		if own && actorRole(c) != rbac.Admin { // no self-approval
+			return c.JSON(http.StatusForbidden, echo.Map{"error": "You cannot approve your own requisition."})
+		}
+		if body.Action == "Reject" && strings.TrimSpace(body.DecisionNote) == "" {
+			return c.JSON(http.StatusBadRequest, echo.Map{"error": "Give a reason for rejecting."})
+		}
+		switch req.ApprovalStatus {
+		case "Pending Approval":
+			if !can(c, "approveReq") && !can(c, "manageProjects") {
+				return c.JSON(http.StatusForbidden, echo.Map{"error": "You cannot approve at this stage."})
+			}
+			if body.Action == "Approve" {
+				req.ApprovalStatus, req.ApprovedBy = "Approved - Ready", actorEmail
+			} else {
+				req.ApprovalStatus = "Rejected"
+			}
+		case "Pending Finance":
+			if !can(c, "approveFinance") {
+				return c.JSON(http.StatusForbidden, echo.Map{"error": "Only Finance can clear this requisition."})
+			}
+			if body.Action == "Approve" {
+				req.ApprovalStatus, req.FinanceStatus = "Approved - Ready", "Approved"
+			} else {
+				req.ApprovalStatus, req.FinanceStatus = "Rejected", "Rejected"
+			}
+		default:
+			return c.JSON(http.StatusConflict, echo.Map{"error": "Requisition is already " + req.ApprovalStatus + "."})
+		}
 	}
 
 	req.DecisionNote = body.DecisionNote
@@ -234,60 +290,68 @@ func IssueRequisition(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, echo.Map{"error": err.Error()})
 	}
 
-	actorEmail := c.Get("email").(string)
-
-	err := db.DB.Transaction(func(tx *gorm.DB) error {
-		var req models.TechnicianRequisition
-		if err := tx.Where("requisition_id = ?", id).First(&req).Error; err != nil {
-			return err
+	email := actorEmail(c)
+	role := actorRole(c)
+	var userUUID *uuid.UUID
+	if uid, ok := c.Get("user_id").(string); ok && uid != "" {
+		if parsed, err := uuid.Parse(uid); err == nil {
+			userUUID = &parsed
 		}
+	}
 
-		// Update requisition
-		req.ApprovalStatus = "Issued"
-		req.IssuedBy = actorEmail
-		now := time.Now()
-		req.IssueDate = &now
-		req.IssuedUnits = fmt.Sprintf("%v", body.AssetIDs)
-		req.UpdatedAt = now
-
-		if err := tx.Save(&req).Error; err != nil {
-			return err
-		}
-
-		// Update physical serial units
-		for _, assetID := range body.AssetIDs {
-			var device models.SerializedInventory
-			if err := tx.Where("asset_id = ?", assetID).First(&device).Error; err == nil {
-				device.Status = "Issued / Out"
-				device.Custodian = req.TechnicianName
-				device.Location = req.ReasonJobTicket
-				device.UpdatedAt = now
-				tx.Save(&device)
-
-				// Create stock movement ledger
-				txLog := models.InventoryTransaction{
-					ID:              uuid.New(),
-					TransactionDate: now,
-					Direction:       "Stock Out",
-					SKU:             req.ItemSKU,
-					ItemName:        device.Model,
-					Quantity:        1,
-					RequestedBy:     req.TechnicianName,
-					Role:            "Technician",
-					SiteReference:   req.ReasonJobTicket,
-					AssetID:         device.AssetID,
-					ProjectID:       req.ProjectID,
-					Notes:           fmt.Sprintf("Issued for Requisition: %s", req.RequisitionID),
-				}
-				tx.Create(&txLog)
-			}
-		}
-
-		return nil
+	var issuedCount int
+	err := db.WithActor(c.Request().Context(), email, role, func(tx *gorm.DB) error {
+		pqAssets := "{" + strings.Join(body.AssetIDs, ",") + "}"
+		return tx.Raw("SELECT issue_requisition(?, ?::text[], ?)", id, pqAssets, userUUID).Scan(&issuedCount).Error
 	})
 
 	if err != nil {
-		return c.JSON(http.StatusInternalServerError, echo.Map{"error": err.Error()})
+		return c.JSON(http.StatusUnprocessableEntity, echo.Map{"error": err.Error()})
 	}
-	return c.JSON(http.StatusOK, echo.Map{"message": "Stock issued successfully"})
+
+	return c.JSON(http.StatusOK, echo.Map{
+		"message":      "Stock issued successfully",
+		"issued_count": issuedCount,
+	})
+}
+
+func RaiseProcurementFromRequisition(c echo.Context) error {
+	reqID := c.Param("id")
+	email := actorEmail(c)
+	role := actorRole(c)
+	var userUUID *uuid.UUID
+	if uid, ok := c.Get("user_id").(string); ok && uid != "" {
+		if parsed, err := uuid.Parse(uid); err == nil {
+			userUUID = &parsed
+		}
+	}
+
+	var procID string
+	err := db.WithActor(c.Request().Context(), email, role, func(tx *gorm.DB) error {
+		return tx.Raw("SELECT raise_procurement_from_requisition(?, ?)", reqID, userUUID).Scan(&procID).Error
+	})
+
+	if err != nil {
+		return c.JSON(http.StatusUnprocessableEntity, echo.Map{"error": err.Error()})
+	}
+
+	return c.JSON(http.StatusOK, echo.Map{
+		"message":        "Procurement raised from requisition",
+		"procurement_id": procID,
+	})
+}
+
+func nilIfBlank(s string) *string {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	v := strings.ToUpper(strings.TrimSpace(s))
+	return &v
+}
+
+func nilIfBlankPtr(s *string) *string {
+	if s == nil {
+		return nil
+	}
+	return nilIfBlank(*s)
 }
