@@ -1,3 +1,4 @@
+import { DeviceReplacementSchema } from "../schemas";
 import React, { useEffect, useState } from 'react';
 import { SerializedInventory, CustomerTicket } from '../types';
 import { RefreshCw, CheckCircle, AlertTriangle, X } from 'lucide-react';
@@ -36,11 +37,25 @@ export const DeviceReplacementModal: React.FC<DeviceReplacementModalProps> = ({ 
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    const payload = {
+      kind: form.kind as 'customer' | 'hotspot',
+      entity_id: form.entityId,
+      role: form.role as 'ONU' | 'AP',
+      old_asset: form.oldAsset,
+      new_asset: form.newAsset,
+      ticket_id: form.ticketId,
+      reason: form.reason,
+    };
+    const val = DeviceReplacementSchema.safeParse(payload);
+    if (!val.success) {
+      setError(val.error.errors[0].message);
+      return;
+    }
     setLoading(true);
     setError(null);
 
     try {
-      await apiFetch('/api/inventory/replace-device', {
+      await apiFetch('/api/device-replacement', {
         method: 'POST',
         body: JSON.stringify(form),
       });

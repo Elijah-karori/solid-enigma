@@ -1,3 +1,4 @@
+import { CatalogItemSchema } from "../schemas";
 import React, { useEffect, useState } from 'react';
 import { ItemCatalog } from '../types';
 import { Plus, Edit2, Boxes, Search } from 'lucide-react';

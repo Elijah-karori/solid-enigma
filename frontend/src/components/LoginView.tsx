@@ -1,3 +1,4 @@
+import { LoginSchema, MagicLinkSchema, OTPVerifySchema, ResetPasswordSchema } from "../schemas";
 import React, { useEffect, useState } from 'react';
 import { Lock, Mail, Server, ShieldCheck, AlertCircle, Loader2, KeyRound, ArrowLeft, CheckCircle2 } from 'lucide-react';
 import { apiFetch, setAuthToken, SessionPayload } from '../api';
@@ -57,6 +58,11 @@ export const LoginView: React.FC<Props> = ({ onLoginSuccess }) => {
 
   const submitPassword = (e: React.FormEvent) => {
     e.preventDefault();
+    const val = LoginSchema.safeParse({ email, password });
+    if (!val.success) {
+      setError(val.error.errors[0].message);
+      return;
+    }
     run(async () => {
       const r = await apiFetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) });
       if (r.status === 'otp_required') {
@@ -73,6 +79,11 @@ export const LoginView: React.FC<Props> = ({ onLoginSuccess }) => {
 
   const submitLoginOtp = (e: React.FormEvent) => {
     e.preventDefault();
+    const val = OTPVerifySchema.safeParse({ code });
+    if (!val.success) {
+      setError(val.error.errors[0].message);
+      return;
+    }
     run(async () => {
       const r = await apiFetch('/api/auth/otp/verify', {
         method: 'POST',

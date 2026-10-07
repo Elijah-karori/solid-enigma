@@ -1,3 +1,4 @@
+import { MovementSchema } from "../schemas";
 import React, { useEffect, useState } from 'react';
 import { ItemCatalog, SerializedInventory, InventoryTransaction } from '../types';
 import { ArrowLeftRight, CheckCircle, AlertTriangle } from 'lucide-react';
@@ -44,6 +45,11 @@ export const StockMovementView: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    const val = MovementSchema.safeParse(form);
+    if (!val.success) {
+      setMessage({ type: "error", text: val.error.errors[0].message });
+      return;
+    }
     setLoading(true);
     setMessage(null);
 

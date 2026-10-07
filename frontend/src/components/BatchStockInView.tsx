@@ -1,3 +1,4 @@
+import { BatchStockInSchema } from "../schemas";
 import React, { useEffect, useState } from 'react';
 import { ItemCatalog } from '../types';
 import { Boxes, Plus, Trash2, CheckCircle2, AlertCircle } from 'lucide-react';
@@ -48,6 +49,11 @@ export const BatchStockInView: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    const val = BatchStockInSchema.safeParse({ sku, site, notes, units });
+    if (!val.success) {
+      setMessage({ type: "error", text: val.error.errors[0].message });
+      return;
+    }
     setLoading(true);
     setMessage(null);
 

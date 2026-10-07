@@ -1,3 +1,4 @@
+import { RequisitionSchema } from "../schemas";
 import React, { useEffect, useState } from 'react';
 import { TechnicianRequisition } from '../types';
 import { Plus, CheckCircle, XCircle, ArrowRight } from 'lucide-react';

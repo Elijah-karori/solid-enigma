@@ -1,3 +1,4 @@
+import { TicketSchema } from "../schemas";
 import React, { useEffect, useState } from 'react';
 import { CustomerTicket } from '../types';
 import { Plus, TicketCheck, RefreshCw, CheckCircle2 } from 'lucide-react';
@@ -29,6 +30,18 @@ export const TicketsTasksView: React.FC = () => {
 
   const handleCreate = (e: React.FormEvent) => {
     e.preventDefault();
+    const payload = {
+      customer_name: tForm.customer_account,
+      issue_category: tForm.issue_category,
+      assigned_technician: tForm.assigned_technician,
+      old_device_sn: tForm.device_swapped_old_sn,
+      new_device_sn: tForm.replacement_device_new_sn,
+    };
+    const val = TicketSchema.safeParse(payload);
+    if (!val.success) {
+      alert(val.error.errors[0].message);
+      return;
+    }
     apiFetch('/api/tickets', {
       method: 'POST',
       body: JSON.stringify(tForm),

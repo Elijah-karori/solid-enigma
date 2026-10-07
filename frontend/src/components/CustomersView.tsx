@@ -1,3 +1,4 @@
+import { CustomerSchema } from "../schemas";
 import React, { useEffect, useState } from 'react';
 import { Customer, Hotspot, HotspotUser } from '../types';
 import { UserPlus, Wifi, Search, Link, Cpu, MapPin } from 'lucide-react';
@@ -49,6 +50,20 @@ export const CustomersView: React.FC<Props> = ({ onOpenGenieACSModal }) => {
 
   const handleCreateCustomer = (e: React.FormEvent) => {
     e.preventDefault();
+    const payload = {
+      customer_account: cForm.account_number,
+      name: cForm.name,
+      subscription_type: cForm.subscription_type === 'Hotspot' ? 'Hotspot User' as const : 'PPPoE' as const,
+      plot_number: cForm.plot_number,
+      location: cForm.location,
+      contact_person: cForm.contact_person,
+      contact_phone: cForm.contact_phone,
+    };
+    const val = CustomerSchema.safeParse(payload);
+    if (!val.success) {
+      alert(val.error.errors[0].message);
+      return;
+    }
     apiFetch('/api/customers', {
       method: 'POST',
       body: JSON.stringify(cForm),
